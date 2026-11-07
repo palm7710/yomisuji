@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { CORE_TAGS, TAGS } from '@/data/tags';
-import { MIN_BOOKS } from '@/lib/diagnose';
+import { MIN_BOOKS } from '@/lib/scoring';
+import { AiNotice } from '@/components/BookCover';
 
 export default function Home() {
   return (
@@ -49,7 +50,7 @@ export default function Home() {
           </span>
         ))}
         <span className="small muted" style={{ padding: '4px 2px' }}>
-          ほか全18の手がかり
+          ほか全18の手がかり・どんな本でも選べます
         </span>
       </div>
 
@@ -60,6 +61,7 @@ export default function Home() {
         <span className="muted" style={{ textAlign: 'center', fontSize: 13 }}>
           登録なし・約1分・{MIN_BOOKS}冊から
         </span>
+        <AiNotice compact />
         <span className="muted" style={{ textAlign: 'center', fontSize: 11.5 }}>
           結果は読書傾向の仮説です。性格を診断するものではありません。
         </span>
