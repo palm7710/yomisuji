@@ -1,29 +1,25 @@
-import type { Book, Genre } from '@/data/books';
-import type { BookMeta } from '@/lib/googleBooks';
+import type { PublicBookMeta } from '@/lib/googleBooks';
 
-// 表紙が取れないときの代わりの色（ジャンルごと）
-const GENRE_COLORS: Record<Genre, string> = {
-  SF: '#2e4a73',
-  ミステリー: '#1e1c19',
-  文芸: '#7a3b2e',
-  ノンフィクション: '#3d6a4c',
-  ビジネス: '#5b3f78',
-  数学読み物: '#2f5f6b',
-  企業小説: '#6b4a2e',
-};
+const COLORS = ['#2e4a73', '#7a3b2e', '#3d6a4c', '#5b3f78', '#6b4a2e', '#1e1c19', '#2f5f6b'];
 
-export type ClientBookMeta = Pick<BookMeta, 'thumbnail' | 'infoLink' | 'publisher'>;
+function colorFor(s: string): string {
+  let h = 0;
+  for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return COLORS[h % COLORS.length];
+}
+
+type CoverBook = Pick<PublicBookMeta, 'title' | 'thumbnail' | 'infoLink'>;
 
 /** 表紙。Google Books の表紙があればそれを、なければ書名だけの表紙を出す */
-export function CoverImage({ book, meta }: { book: Book; meta?: ClientBookMeta | null }) {
+export function CoverImage({ book }: { book: CoverBook }) {
   return (
     <span className="cover">
-      {meta?.thumbnail ? (
+      {book.thumbnail ? (
         // Google Books の画像は外部ドメインなので、最適化を通さずそのまま出す
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={meta.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
+        <img src={book.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />
       ) : (
-        <span className="cover-text" style={{ background: GENRE_COLORS[book.genre] }} aria-hidden="true">
+        <span className="cover-text" style={{ background: colorFor(book.title) }} aria-hidden="true">
           {book.title}
         </span>
       )}
@@ -32,11 +28,10 @@ export function CoverImage({ book, meta }: { book: Book; meta?: ClientBookMeta |
 }
 
 /** 表紙＋Google Books へのリンク（ブランドガイドラインにより、各書籍にリンクを付ける） */
-export function LinkedCover({ book, meta }: { book: Book; meta?: ClientBookMeta | null }) {
-  if (!meta?.infoLink) return <CoverImage book={book} meta={meta} />;
+export function LinkedCover({ book }: { book: CoverBook }) {
   return (
-    <a href={meta.infoLink} target="_blank" rel="noopener noreferrer" aria-label={`『${book.title}』をGoogle Booksで見る`}>
-      <CoverImage book={book} meta={meta} />
+    <a href={book.infoLink} target="_blank" rel="noopener noreferrer" aria-label={`『${book.title}』をGoogle Booksで見る`}>
+      <CoverImage book={book} />
     </a>
   );
 }
@@ -45,8 +40,18 @@ export function GoogleAttribution() {
   return (
     <p className="attribution">
       書誌情報・表紙画像：Google Books（Powered by Google）
-      <br />
-      表紙をタップすると Google Books のページが開きます
+    </p>
+  );
+}
+
+/** AIが作る結果であることの注意 */
+export function AiNotice({ compact = false }: { compact?: boolean }) {
+  return (
+    <p className="ai-notice" role="note">
+      <b>AIが作る診断です。</b>
+      {compact
+        ? '同じ本を選んでも、診断するたびに結果が変わることがあります。'
+        : '本ごとのタグ付け・分析・おすすめはAI（DeepSeek）が行うため、同じ本を選んでも診断するたびにタイプや説明が変わることがあります。おすすめの本は Google Books で実在を確かめたものだけを表示しています。'}
     </p>
   );
 }
