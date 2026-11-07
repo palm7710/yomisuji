@@ -58,7 +58,14 @@ export function normalizeRequest(req: DiagnoseRequest): Required<DiagnoseRequest
     }),
   );
   const disliked = uniq((req.disliked ?? []).filter((id) => VOLUME_ID.test(id) && !books.includes(id))).slice(0, MAX_DISLIKED);
-  return { books, favorite, likes, disliked };
+  const allowedTitleIds = new Set([...books, ...disliked]);
+  const seriesTitles = Object.fromEntries(
+    Object.entries(req.seriesTitles ?? {})
+      .filter(([id, title]) => allowedTitleIds.has(id) && typeof title === 'string')
+      .map(([id, title]) => [id, title.replace(/\s+/g, ' ').trim().slice(0, 100)])
+      .filter(([, title]) => title.length > 0),
+  );
+  return { books, favorite, likes, disliked, seriesTitles };
 }
 
 async function tag(books: BookMeta[]): Promise<BookTagging[]> {
@@ -135,7 +142,9 @@ export async function runDiagnosis(raw: DiagnoseRequest): Promise<DiagnosisResul
   const req = normalizeRequest(raw);
 
   // 1. 書誌
-  const metas = await Promise.all([...req.books, ...req.disliked].map(getVolume));
+  const fetchedMetas = await Promise.all([...req.books, ...req.disliked].map(getVolume));
+  // 検索画面でシリーズとして選ばれた本は、代表巻ではなく作品名としてAIと結果画面へ渡す
+  const metas = fetchedMetas.map((meta) => (meta && req.seriesTitles[meta.volumeId] ? { ...meta, title: req.seriesTitles[meta.volumeId] } : meta));
   const books = metas.slice(0, req.books.length);
   const missing = req.books.filter((_, i) => !books[i]);
   if (missing.length > 0) throw new BadRequestError('本の情報を取得できませんでした。少し時間をおいてもう一度お試しください');
