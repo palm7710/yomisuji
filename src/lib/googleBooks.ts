@@ -41,6 +41,8 @@ export type PublicBookMeta = Omit<BookMeta, 'description' | 'categories' | 'rati
 export interface SearchBookMeta extends PublicBookMeta {
   seriesTitle?: string;
   seriesCount?: number;
+  /** まとめ表示で代表にした巻。1巻が検索結果にあれば必ず1になる */
+  seriesRepresentativeVolume?: number;
 }
 
 export function toPublic(m: BookMeta): PublicBookMeta {
@@ -183,15 +185,22 @@ export function collapseBookSeries(books: BookMeta[], query = ''): SearchBookMet
       );
     })
     .map((group) => {
-      const representative = [...group.entries].sort((a, b) => {
-        if (a.volume === undefined && b.volume !== undefined) return -1;
-        if (a.volume !== undefined && b.volume === undefined) return 1;
+      const representativeEntry = [...group.entries].sort((a, b) => {
+        // 巻数不明の版より巻数が分かる版を優先し、1巻があれば必ず代表にする
+        if (a.volume === undefined && b.volume !== undefined) return 1;
+        if (a.volume !== undefined && b.volume === undefined) return -1;
         return (a.volume ?? Number.MAX_SAFE_INTEGER) - (b.volume ?? Number.MAX_SAFE_INTEGER) || a.order - b.order;
-      })[0].book;
+      })[0];
+      const representative = representativeEntry.book;
       const publicBook = toPublic(representative);
       if (group.entries.length === 1) return publicBook;
       const title = commonSeriesTitle(group.entries.map((e) => splitSeriesTitle(e.book.title).title), group.title);
-      return { ...publicBook, seriesTitle: title, seriesCount: group.entries.length };
+      return {
+        ...publicBook,
+        seriesTitle: title,
+        seriesCount: group.entries.length,
+        seriesRepresentativeVolume: representativeEntry.volume,
+      };
     });
 }
 
