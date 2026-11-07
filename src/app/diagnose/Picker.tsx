@@ -174,7 +174,7 @@ export function Picker() {
                 ? search.searching
                   ? '検索しています…'
                   : search.results
-                    ? `${search.results.length}件見つかりました。タップで追加します`
+                    ? `${search.results.length}件見つかりました。人気度の高い順に表示しています`
                     : ''
                 : justAdded
                   ? `『${justAdded}』を追加しました。続けて探せます`
@@ -197,8 +197,12 @@ export function Picker() {
                           <CoverImage book={b} />
                         </span>
                         <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
-                          <span className="book-title" style={{ fontSize: 14 }}>{displayTitle(b)}</span>
-                          {(b.seriesCount ?? 0) > 1 && <span className="small muted">同シリーズの{b.seriesCount}件をまとめて表示</span>}
+                          <span className="book-title" style={{ fontSize: 14 }}>{b.title}</span>
+                          {(b.seriesCount ?? 0) > 1 && (
+                            <span className="small muted">
+                              {b.seriesRepresentativeVolume === 1 ? '1巻目' : '先頭の巻'}を表示し、同じシリーズの検索結果を1件にまとめています
+                            </span>
+                          )}
                           <span className="book-author">
                             {b.authors.join('、')}
                             {b.publishedDate ? `・${b.publishedDate.slice(0, 4)}` : ''}
