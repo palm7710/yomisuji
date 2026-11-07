@@ -1,14 +1,21 @@
-// 診断結果の保存。AIの結果は毎回変わるので、シェアされたURLでは保存した結果をそのまま見せる。
-// - UPSTASH_REDIS_REST_URL と UPSTASH_REDIS_REST_TOKEN があれば Upstash Redis（本番向け）
-// - なければ .data/results/ にJSONファイルで保存（手元の開発用。サーバーレス環境では消える）
+// 保存まわり。
+// - 診断結果：AIの結果は毎回変わるので、シェアされたURLでは保存した結果をそのまま見せる
+// - 本ごとのタグ：一度AIが付けたタグを保存し、同じ本が選ばれたらAIを呼ばずに使い回す（使用量を減らす）
+// 保存先：UPSTASH_REDIS_REST_URL と UPSTASH_REDIS_REST_TOKEN があれば Upstash Redis（本番向け）。
+//         なければ DATA_DIR（省略時 .data/）にJSONファイルで保存（手元の開発用。サーバーレス環境では消える）
 
 import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { BookTagging } from './prompts';
 import type { DiagnosisResult } from './types';
 
-const TTL_SECONDS = 60 * 60 * 24 * 365;
-const DIR = path.join(process.cwd(), '.data', 'results');
+const RESULT_TTL_SECONDS = 60 * 60 * 24 * 365;
+const TAG_TTL_SECONDS = 60 * 60 * 24 * 180;
+/** タグ付けの指示やタグの種類を変えたら上げる（古いタグを使い回さないため） */
+export const TAG_CACHE_VERSION = 'v1';
+
+const dataDir = () => process.env.DATA_DIR ?? path.join(process.cwd(), '.data');
 
 export function isValidResultId(id: string): boolean {
   return /^[A-Za-z0-9_-]{10,32}$/.test(id);
@@ -25,34 +32,97 @@ function upstash(): { url: string; token: string } | null {
   return url && token ? { url, token } : null;
 }
 
+async function upstashCommand(up: { url: string; token: string }, command: (string | number)[]): Promise<unknown> {
+  const res = await fetch(up.url, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${up.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(command),
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`Upstash ${res.status}`);
+  return ((await res.json()) as { result?: unknown }).result;
+}
+
+// ---------------------------------------------------------------------------
+// 診断結果
+// ---------------------------------------------------------------------------
+
 export async function saveResult(result: DiagnosisResult): Promise<void> {
   const up = upstash();
   if (up) {
-    const res = await fetch(`${up.url}/set/r:${result.id}?EX=${TTL_SECONDS}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${up.token}` },
-      body: JSON.stringify(result),
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`結果を保存できませんでした（${res.status}）`);
+    await upstashCommand(up, ['SET', `r:${result.id}`, JSON.stringify(result), 'EX', RESULT_TTL_SECONDS]);
     return;
   }
-  await fs.mkdir(DIR, { recursive: true });
-  await fs.writeFile(path.join(DIR, `${result.id}.json`), JSON.stringify(result));
+  const dir = path.join(dataDir(), 'results');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, `${result.id}.json`), JSON.stringify(result));
 }
 
 export async function loadResult(id: string): Promise<DiagnosisResult | null> {
   if (!isValidResultId(id)) return null;
   const up = upstash();
   if (up) {
-    const res = await fetch(`${up.url}/get/r:${id}`, { headers: { authorization: `Bearer ${up.token}` }, cache: 'no-store' });
-    if (!res.ok) return null;
-    const json = (await res.json()) as { result?: string | null };
-    return json.result ? (JSON.parse(json.result) as DiagnosisResult) : null;
+    try {
+      const raw = await upstashCommand(up, ['GET', `r:${id}`]);
+      return typeof raw === 'string' ? (JSON.parse(raw) as DiagnosisResult) : null;
+    } catch {
+      return null;
+    }
   }
   try {
-    return JSON.parse(await fs.readFile(path.join(DIR, `${id}.json`), 'utf8')) as DiagnosisResult;
+    return JSON.parse(await fs.readFile(path.join(dataDir(), 'results', `${id}.json`), 'utf8')) as DiagnosisResult;
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 本ごとのタグ（volumeId ごと）
+// ---------------------------------------------------------------------------
+
+const tagKey = (volumeId: string) => `t:${TAG_CACHE_VERSION}:${volumeId}`;
+
+/** 保存済みのタグを返す。見つからない本は含まれない。読めなくても例外は投げない（AIで付け直すだけ） */
+export async function loadTags(volumeIds: string[]): Promise<Map<string, BookTagging>> {
+  const out = new Map<string, BookTagging>();
+  if (volumeIds.length === 0) return out;
+  try {
+    const up = upstash();
+    if (up) {
+      const raws = (await upstashCommand(up, ['MGET', ...volumeIds.map(tagKey)])) as (string | null)[];
+      raws.forEach((raw, i) => {
+        if (raw) out.set(volumeIds[i], JSON.parse(raw) as BookTagging);
+      });
+      return out;
+    }
+    const dir = path.join(dataDir(), 'tags', TAG_CACHE_VERSION);
+    await Promise.all(
+      volumeIds.map(async (id) => {
+        try {
+          out.set(id, JSON.parse(await fs.readFile(path.join(dir, `${id}.json`), 'utf8')) as BookTagging);
+        } catch {
+          /* まだない */
+        }
+      }),
+    );
+  } catch (e) {
+    console.warn(`[store] loadTags failed: ${(e as Error).message}`);
+  }
+  return out;
+}
+
+export async function saveTags(tags: BookTagging[]): Promise<void> {
+  if (tags.length === 0) return;
+  try {
+    const up = upstash();
+    if (up) {
+      await Promise.all(tags.map((t) => upstashCommand(up, ['SET', tagKey(t.id), JSON.stringify(t), 'EX', TAG_TTL_SECONDS])));
+      return;
+    }
+    const dir = path.join(dataDir(), 'tags', TAG_CACHE_VERSION);
+    await fs.mkdir(dir, { recursive: true });
+    await Promise.all(tags.map((t) => fs.writeFile(path.join(dir, `${t.id}.json`), JSON.stringify(t))));
+  } catch (e) {
+    console.warn(`[store] saveTags failed: ${(e as Error).message}`);
   }
 }
