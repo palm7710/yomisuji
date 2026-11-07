@@ -35,10 +35,13 @@ ${TAG_GUIDE}
 ルール：
 - 重みは 0〜3 の整数。その本の面白さの中心なら3、はっきりあるなら2、少しあるなら1、なければ0（省略してよい）。
 - 面白さの核（${CORE_TAGS.join(', ')}）から最低1つは2以上を付ける。
-- 読後感（exhilarating, lingering, bitter, warm, unsettling）と語り方（ensemble, inner, dialogue, document, lecture）も、それぞれ1つ以上付ける。
+- 読後感（exhilarating, lingering, bitter, warm, unsettling）と書き方（ensemble, inner, dialogue, document, lecture）も、それぞれ1つ以上付ける。
 - genre は次から1つ選ぶ：${GENRES.join('、')}
 - note は40字以内。その本の特徴をネタバレなしで書く。結末・犯人・どんでん返しの中身は書かない。
-- よく知らない本は、渡された分類と内容紹介だけから判断し、重みは控えめにする。作り話はしない。`;
+- よく知らない本は、渡された分類と内容紹介だけから判断し、重みは控えめにする。作り話はしない。
+- 小説やマンガ以外（エッセイ・ビジネス書・自己啓発・実用書・ノンフィクション・絵本）にも、同じタグで「どんな面白さの本か」を付ける。
+  例：考え方が変わる自己啓発書は mechanism、仕事の現場を描くビジネス書は organization、旅行記は immersion、
+  著者の本音がにじむエッセイは lies や inner、図解の多い入門書は lecture。`;
 
 export function taggingUserPrompt(books: BookForTagging[]): string {
   const list = books.map((b) => ({
@@ -52,12 +55,13 @@ export function taggingUserPrompt(books: BookForTagging[]): string {
 {"books":[{"id":"渡したid","genre":"ミステリー","weights":{"reversal":3,"lies":2,"bitter":2,"ensemble":2},"note":"…"}]}
 
 本：
-${JSON.stringify(list, null, 1)}`;
+${JSON.stringify(list)}`;
 }
 
 export class InvalidAiOutputError extends Error {}
 
-export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
+/** 返り値から、正しくタグが付いた本だけを取り出す（欠けた本は含まれない） */
+export function parseTaggingPartial(raw: unknown, ids: string[]): Map<string, BookTagging> {
   const books = (raw as { books?: unknown })?.books;
   if (!Array.isArray(books)) throw new InvalidAiOutputError('books がありません');
   const byId = new Map<string, BookTagging>();
@@ -75,6 +79,16 @@ export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
     const note = String(item.note ?? '').replace(/\s+/g, ' ').slice(0, 60);
     byId.set(id, { id, genre, weights, note });
   }
+  return byId;
+}
+
+/** タグ付け1回分の出力の上限（本の数に合わせる） */
+export const taggingMaxTokens = (n: number) => 150 + 120 * n;
+/** 分析1回分の出力の上限（本の数に合わせる） */
+export const analysisMaxTokens = (n: number) => 2000 + 60 * n;
+
+export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
+  const byId = parseTaggingPartial(raw, ids);
   const missing = ids.filter((id) => !byId.has(id));
   if (missing.length > 0) throw new InvalidAiOutputError(`タグが付かなかった本があります: ${missing.join(', ')}`);
   return ids.map((id) => byId.get(id)!);
@@ -135,12 +149,16 @@ export const ANALYSIS_SYSTEM = `あなたは読書傾向を言葉にする、や
 渡された計算結果と本の情報だけをもとに、診断結果の文章とおすすめの本を書きます。出力は必ずJSONだけにしてください。
 
 書き方のルール：
+- 選ばれた本には、小説・マンガ・ライトノベル・エッセイ・ビジネス書・実用書・ノンフィクションなどが混ざる。どのジャンルを読む人が読んでも「自分のことだ」と思える言葉で書く。
+- 小説寄りの専門用語（伏線、叙述トリック、群像劇、プロット、メタ構造など）は使わず、ふだんの言葉で言い換える。
+- 「物語」「登場人物」は小説やマンガについて書くときだけ使う。本全体については「本」「書き手」「読み心地」などを使う。
+- タグの名前は、渡した日本語の名前をそのまま使う（英語のidは書かない）。
 - 結果は読書傾向の「仮説」として書く。文末は「〜かもしれません」「〜そうです」「〜が合いそうです」。
 - 性格・能力・心の状態を決めつけない。「性格」「頭がいい」などの評価の言葉を使わない。
 - 本の結末、犯人、仕掛けの中身などネタバレを書かない。作品について書くのは、渡した note と一般によく知られた特徴の範囲だけ。
 - 本の題名を書くときは『』で囲む。渡していない本の題名は、おすすめ（recommendations）以外では書かない。
 - 文字数の上限を守る：summary ${LIMITS.summary}字、detail ${LIMITS.detail}字、aftertaste と style ${LIMITS.aftertaste}字、hidden ${LIMITS.hidden}字、reason ${LIMITS.reason}字、catchphrase ${LIMITS.catchphrase}字、patterns の title ${LIMITS.patternTitle}字・body ${LIMITS.patternBody}字、connections の text ${LIMITS.connection}字、per_book の point ${LIMITS.point}字、mismatch ${LIMITS.mismatch}字、how_to_choose ${LIMITS.howToChoose}字。
-- catchphrase は、その人の読み筋を言い表す短い二つ名（例：「静かな謎に耳をすます人」）。タイプ名をそのまま繰り返さない。
+- catchphrase は、その人の読み筋を言い表す短い二つ名（例：「静かな謎に耳をすます人」「人の本音を拾い集める人」）。ジャンル名を入れない。タイプ名をそのまま繰り返さない。
 - patterns は、選んだ本や「好きなところ」から見える読み方のくせを2〜3個。抽象的な言葉だけで終わらせず、本の具体的な特徴に結びつける。
 - connections は、ジャンルの違う本どうしに共通する面白さを1〜2個。book_ids に2冊のidを入れる。
 - per_book は、選ばれた本すべてについて、この人が惹かれていそうなところを1文ずつ。liked（好きなところ）があればそれを生かす。
@@ -159,12 +177,12 @@ export function analysisUserPrompt(ctx: AnalysisContext): string {
   return `計算結果：
 - タイプ：${s.modifier}${s.typeName}（メイン：${TAGS[s.main].label}、サブ：${TAGS[s.sub].label}、確からしさ：${s.confidence}）
 - 面白さの核の得点（0〜100）：${JSON.stringify(coreScores)}
-- 好きな読後感：${TAGS[s.aftertaste].label}　好きな語り方：${TAGS[s.style].label}
+- 好きな読後感：${TAGS[s.aftertaste].label}　好きな書き方：${TAGS[s.style].label}
 - 選んだ本でいちばん多いジャンル：${s.majorityGenre}　メインの面白さがジャンルをまたいでいるか：${s.crossGenre ? 'はい' : 'いいえ'}
 - 隠れた好み：${s.hidden ? TAGS[s.hidden].label : 'なし'}
 - 好みの集中度：${s.focus}（${s.focusType}）　いちばん得点の低い面白さ：${TAGS[s.contrast].label}
 - 読後感の得点：${JSON.stringify(Object.fromEntries(AFTERTASTE_TAGS.map((t) => [TAGS[t].label, s.scores[t]])))}
-- 語り方の得点：${JSON.stringify(Object.fromEntries(STYLE_TAGS.map((t) => [TAGS[t].label, s.scores[t]])))}
+- 書き方の得点：${JSON.stringify(Object.fromEntries(STYLE_TAGS.map((t) => [TAGS[t].label, s.scores[t]])))}
 - メインの得点に効いた本（id）：${s.evidence.map((e) => e.bookId).join(', ')}
 
 選ばれた本：
@@ -179,8 +197,6 @@ ${JSON.stringify(
     liked: b.likedLabels,
     liked_tags: b.likedTags.map((t) => TAGS[t].label),
   })),
-  null,
-  1,
 )}
 
 次の形のJSONで返してください。
@@ -188,7 +204,7 @@ ${JSON.stringify(
  "summary": "「ジャンルは${s.majorityGenre}。でも惹かれているのは…かもしれません。」の形の1〜2文",
  "detail": "サブの面白さや、選んだ本どうしのつながりを1〜2文",
  "aftertaste": "好きな読後感について1文",
- "style": "好きな語り方について1文",
+ "style": "好きな書き方について1文",
  "hidden": ${s.hidden ? '"隠れた好みについて1文"' : 'null'},
  "evidence": [{"book_id": "メインの得点に効いた本のid", "reason": "その本がメインの面白さにどう効いたか1文"}],
  "catchphrase": "読み筋をひと言で",
