@@ -66,6 +66,28 @@ export const TYPE_NAMES: Record<CoreTag, { name: string; copy: string }> = {
   immersion: { name: '未知に飛び込む人', copy: '見たことのない場所へ、ページごと連れていかれたい。' },
 };
 
+/** AIが本に付けるジャンル（この中から選ばせる） */
+export const GENRES = [
+  'SF',
+  'ファンタジー',
+  'ミステリー',
+  'ホラー',
+  '恋愛',
+  '文芸',
+  '歴史・時代',
+  'ライトノベル',
+  'マンガ',
+  '児童書',
+  'エッセイ',
+  'ノンフィクション',
+  'ビジネス',
+  '自己啓発',
+  '科学・数学',
+  '人文・思想',
+  'その他',
+] as const;
+export type Genre = (typeof GENRES)[number];
+
 /** 読後感（B層）の1位からつく修飾語 */
 export const AFTERTASTE_MODIFIERS: Record<AftertasteTag, string> = {
   exhilarating: '爽快に、',
