@@ -25,7 +25,7 @@ export function isConfigured(): boolean {
  * system と user の指示を送り、JSONとして読めた返り値を返す。
  * 返り値が空・JSONとして読めない・通信エラーのときは1回だけやり直す。
  */
-export async function chatJson(system: string, user: string, opts: { temperature?: number; maxTokens?: number } = {}): Promise<unknown> {
+export async function chatJson(system: string, user: string, opts: { temperature?: number; maxTokens?: number; label?: string } = {}): Promise<unknown> {
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) throw new AiUnavailableError('DEEPSEEK_API_KEY が設定されていません');
 
@@ -42,8 +42,11 @@ export async function chatJson(system: string, user: string, opts: { temperature
             { role: 'user', content: user },
           ],
           response_format: { type: 'json_object' },
+          // 思考モードは初期設定でオン（effort: high）。画面に出ない思考の文章で出力が大きく増えるので切る。
+          // 戻したいときは DEEPSEEK_THINKING=enabled（そのときは temperature は効かない）
+          thinking: { type: process.env.DEEPSEEK_THINKING === 'enabled' ? 'enabled' : 'disabled' },
           temperature: opts.temperature ?? 0.7,
-          max_tokens: opts.maxTokens ?? 4000,
+          max_tokens: opts.maxTokens ?? 2000,
           stream: false,
         }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -53,7 +56,11 @@ export async function chatJson(system: string, user: string, opts: { temperature
         throw new AiUnavailableError(`DeepSeek API ${res.status}: キーまたは残高を確認してください`);
       }
       if (!res.ok) throw new Error(`DeepSeek API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      const json = (await res.json()) as {
+        choices?: { message?: { content?: string }; finish_reason?: string }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
+      };
+      logUsage(opts.label ?? 'chat', json.usage, json.choices?.[0]?.finish_reason);
       const content = json.choices?.[0]?.message?.content?.trim();
       // JSONとして認められないと、中身が空白で返ることがある（公式の注意書き）
       if (!content) throw new Error('DeepSeek の返り値が空でした');
@@ -65,4 +72,18 @@ export async function chatJson(system: string, user: string, opts: { temperature
     }
   }
   throw new AiUnavailableError(`DeepSeek から結果を得られませんでした: ${(lastError as Error)?.message}`);
+}
+
+/** 使用量をターミナルに出す（実際の使用量を確かめるため）。上限で切れたときは警告する */
+function logUsage(
+  label: string,
+  u: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } | undefined,
+  finishReason: string | undefined,
+): void {
+  if (u) {
+    console.info(
+      `[deepseek] ${label}: 入力 ${u.prompt_tokens ?? '?'}（キャッシュ ${u.prompt_cache_hit_tokens ?? 0} / 新規 ${u.prompt_cache_miss_tokens ?? '?'}）、出力 ${u.completion_tokens ?? '?'}`,
+    );
+  }
+  if (finishReason === 'length') console.warn(`[deepseek] ${label}: 出力の上限で切れました。max_tokens を見直してください`);
 }
