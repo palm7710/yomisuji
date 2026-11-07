@@ -18,7 +18,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   if (!r) return { title: '読み筋診断（仮）' };
   const s = r.scoring;
   const title = `${s.modifier}${s.typeName}｜読み筋診断（仮）`;
-  return { title, description: s.copy, openGraph: { title, description: s.copy }, twitter: { card: 'summary', title, description: s.copy } };
+  return { title, description: s.copy, openGraph: { title, description: s.copy }, twitter: { card: 'summary_large_image', title, description: s.copy } };
 }
 
 function Bars({ tags, scores, color, highlight }: { tags: readonly TagId[]; scores: Record<TagId, number>; color: string; highlight?: TagId }) {
@@ -84,7 +84,7 @@ export default async function ResultPage({ params }: { params: Params }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
           {!s.secondTypeName && <span className="header-chip">サブ：{TAGS[s.sub].label}</span>}
           <span className="header-chip">読後感：{TAGS[s.aftertaste].label}</span>
-          <span className="header-chip">語り方：{TAGS[s.style].label}</span>
+          <span className="header-chip">書き方：{TAGS[s.style].label}</span>
           {s.focusType && <span className="header-chip">{FOCUS_LABEL[s.focusType].name}</span>}
         </div>
       </header>
@@ -140,7 +140,7 @@ export default async function ResultPage({ params }: { params: Params }) {
           </div>
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div>
-              <span className="small muted">好きな語り方</span>
+              <span className="small muted">好きな書き方</span>
               <div className="serif" style={{ fontWeight: 800, fontSize: 22, color: 'var(--green)' }}>{TAGS[s.style].label}</div>
             </div>
             <span style={{ fontSize: 12.5, lineHeight: 1.7 }}>{t.style}</span>
