@@ -31,6 +31,12 @@ export interface BookMeta {
 /** ブラウザに渡してよい項目だけに絞った形 */
 export type PublicBookMeta = Omit<BookMeta, 'description' | 'categories'>;
 
+/** 検索画面用。同じ漫画シリーズをまとめたときだけシリーズ名と件数が入る。 */
+export interface SearchBookMeta extends PublicBookMeta {
+  seriesTitle?: string;
+  seriesCount?: number;
+}
+
 export function toPublic(m: BookMeta): PublicBookMeta {
   const { description: _d, categories: _c, ...rest } = m;
   return rest;
@@ -84,6 +90,47 @@ export function normalizeTitle(s: string): string {
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[\s・、。,.:：!！?？「」『』()（）\-‐―〜~]/g, '');
+}
+
+/** 書名の末尾にある巻数を分ける。「3月のライオン 17」は題名中の3を残して17だけ外す。 */
+export function splitSeriesTitle(title: string): { title: string; volume?: number } {
+  const value = title.normalize('NFKC').trim();
+  const patterns = [
+    /^(.*?)[\s　]*(?:第\s*)?(\d+)\s*(?:巻|集)\s*$/i,
+    /^(.*?)[\s　]*[（(](\d+)[）)]\s*$/i,
+    /^(.*?)[\s　]+(?:vol(?:ume)?\.?\s*|book\s*)?(\d+)\s*$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    const base = match?.[1]?.trim();
+    if (base) return { title: base, volume: Number(match![2]) };
+  }
+  return { title: value };
+}
+
+/** 巻違いの検索結果をシリーズ単位にまとめ、未巻数版または若い巻を代表にする。 */
+export function collapseBookSeries(books: PublicBookMeta[]): SearchBookMeta[] {
+  const groups = new Map<string, { title: string; entries: { book: PublicBookMeta; volume?: number; order: number }[] }>();
+  books.forEach((book, order) => {
+    const series = splitSeriesTitle(book.title);
+    const author = normalizeTitle(book.authors[0] ?? book.publisher ?? '');
+    const key = `${normalizeTitle(series.title)}|${author}`;
+    const group = groups.get(key) ?? { title: series.title, entries: [] };
+    group.entries.push({ book, volume: series.volume, order });
+    groups.set(key, group);
+  });
+
+  return [...groups.values()]
+    .sort((a, b) => Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order)))
+    .map((group) => {
+      const representative = [...group.entries].sort((a, b) => {
+        if (a.volume === undefined && b.volume !== undefined) return -1;
+        if (a.volume !== undefined && b.volume === undefined) return 1;
+        return (a.volume ?? Number.MAX_SAFE_INTEGER) - (b.volume ?? Number.MAX_SAFE_INTEGER) || a.order - b.order;
+      })[0].book;
+      if (group.entries.length === 1) return representative;
+      return { ...representative, seriesTitle: group.title, seriesCount: group.entries.length };
+    });
 }
 
 /** 検索結果から、書名と著者にいちばん合う1冊を選ぶ。書名が合うものがなければ null */
