@@ -140,6 +140,11 @@ export function Picker() {
           favorite: withDetails ? draft.favorite || undefined : undefined,
           likes: withDetails ? draft.likes : [],
           disliked: withDetails ? draft.disliked.map((b) => b.volumeId) : [],
+          seriesTitles: Object.fromEntries(
+            [...draft.selected, ...(withDetails ? draft.disliked : [])]
+              .filter((b) => b.seriesTitle)
+              .map((b) => [b.volumeId, b.seriesTitle!]),
+          ),
         }),
       });
       const json = (await res.json()) as { id?: string; error?: string };
