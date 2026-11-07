@@ -6,3 +6,8 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 .data/
+/dist/
+.vinext/
+.cloudflare/
+.wrangler/
+/ChatGPT 画像 *.png
