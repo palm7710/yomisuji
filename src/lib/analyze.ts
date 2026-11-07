@@ -7,7 +7,8 @@
 // 6. 結果を保存し、IDを返す
 
 import 'server-only';
-import { CORE_TAGS, type TagId } from '@/data/tags';
+import type { TagId } from '@/data/tags';
+import { LIKE_BY_ID } from '@/data/likes';
 import { aiModelName, chatJson, isMock } from './deepseek';
 import { findBook, getVolume, toPublic, type BookMeta } from './googleBooks';
 import { mockAnalysis, mockTagging } from './mock';
@@ -32,6 +33,16 @@ export class BadRequestError extends Error {}
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
 const VOLUME_ID = /^[A-Za-z0-9_-]{4,40}$/;
 
+/** `本ID:選択肢ID` を、計算用の `本ID:タグ` に置き換える */
+export function expandLikes(likes: string[]): string[] {
+  return uniq(
+    likes.flatMap((k) => {
+      const [id, opt] = k.split(':');
+      return (LIKE_BY_ID[opt]?.tags ?? []).map((t) => `${id}:${t}`);
+    }),
+  );
+}
+
 export function normalizeRequest(req: DiagnoseRequest): Required<DiagnoseRequest> {
   const books = uniq((req.books ?? []).filter((id) => typeof id === 'string' && VOLUME_ID.test(id)));
   if (books.length < MIN_BOOKS) throw new BadRequestError(`本は${MIN_BOOKS}冊以上選んでください`);
@@ -39,8 +50,8 @@ export function normalizeRequest(req: DiagnoseRequest): Required<DiagnoseRequest
   const favorite = req.favorite && books.includes(req.favorite) ? req.favorite : '';
   const likes = uniq(
     (req.likes ?? []).filter((k) => {
-      const [id, tag] = String(k).split(':');
-      return books.includes(id) && (CORE_TAGS as readonly string[]).includes(tag);
+      const [id, opt] = String(k).split(':');
+      return books.includes(id) && opt in LIKE_BY_ID;
     }),
   );
   const disliked = uniq((req.disliked ?? []).filter((id) => VOLUME_ID.test(id) && !books.includes(id))).slice(0, MAX_DISLIKED);
@@ -63,7 +74,7 @@ async function tag(books: BookMeta[]): Promise<BookTagging[]> {
 async function write(ctx: AnalysisContext): Promise<{ text: AnalysisText; fallback: boolean }> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = isMock() ? mockAnalysis(ctx) : await chatJson(ANALYSIS_SYSTEM, analysisUserPrompt(ctx), { temperature: 0.8 });
+      const raw = isMock() ? mockAnalysis(ctx) : await chatJson(ANALYSIS_SYSTEM, analysisUserPrompt(ctx), { temperature: 0.8, maxTokens: 6000 });
       return { text: validateAnalysis(raw, ctx), fallback: false };
     } catch (e) {
       console.warn(`[analyze] analysis attempt ${attempt + 1} rejected: ${(e as Error).message}`);
@@ -113,7 +124,7 @@ export async function runDiagnosis(raw: DiagnoseRequest): Promise<DiagnosisResul
     books: (books as BookMeta[]).map(tagged),
     disliked: dislikedMetas.map(tagged),
     favorite: req.favorite || undefined,
-    likes: req.likes,
+    likes: expandLikes(req.likes),
   });
 
   // 4. 文章
@@ -126,7 +137,10 @@ export async function runDiagnosis(raw: DiagnoseRequest): Promise<DiagnosisResul
       genre: tagOf.get(m.volumeId)!.genre,
       note: tagOf.get(m.volumeId)!.note,
       favorite: m.volumeId === req.favorite,
-      likedTags: req.likes.filter((k) => k.startsWith(`${m.volumeId}:`)).map((k) => k.split(':')[1] as TagId),
+      likedTags: expandLikes(req.likes)
+        .filter((k) => k.startsWith(`${m.volumeId}:`))
+        .map((k) => k.split(':')[1] as TagId),
+      likedLabels: req.likes.filter((k) => k.startsWith(`${m.volumeId}:`)).map((k) => LIKE_BY_ID[k.split(':')[1]].label),
     })),
   };
   const { text, fallback } = await write(ctx);
@@ -149,7 +163,7 @@ export async function runDiagnosis(raw: DiagnoseRequest): Promise<DiagnosisResul
     likes: req.likes,
     disliked: req.disliked,
     scoring,
-    text: { summary: text.summary, detail: text.detail, aftertaste: text.aftertaste, style: text.style, hidden: text.hidden, evidence: text.evidence },
+    text: (({ recommendations: _r, ...rest }) => rest)(text),
     recommendations,
   };
 
