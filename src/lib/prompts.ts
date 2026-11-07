@@ -1,7 +1,7 @@
 // DeepSeek への指示文と、返ってきたJSONの検査。
 // 検査は純粋な関数にしてあり、テストで確かめられる。
 
-import { ALL_TAGS, CORE_TAGS, GENRES, TAGS, type Genre, type TagId } from '@/data/tags';
+import { AFTERTASTE_TAGS, ALL_TAGS, CORE_TAGS, GENRES, STYLE_TAGS, TAGS, type Genre, type TagId } from '@/data/tags';
 import type { ScoringResult } from './scoring';
 
 // ---------------------------------------------------------------------------
@@ -97,9 +97,36 @@ export interface AnalysisText {
   hidden?: string;
   evidence: { bookId: string; reason: string }[];
   recommendations: { title: string; author: string; reason: string; tags: TagId[]; surprise: boolean }[];
+  // ↓ 詳しい分析。どれもAIが書けなかったときは空のまま（画面ではその欄を出さない）
+  /** 読み筋をひと言で（キャッチコピー） */
+  catchphrase?: string;
+  /** 読み方のくせ（2〜3個） */
+  patterns?: { title: string; body: string }[];
+  /** 本と本のつながり（1〜2個） */
+  connections?: { bookIds: string[]; text: string }[];
+  /** 選んだ本それぞれで、惹かれていそうなところ */
+  perBook?: { bookId: string; point: string }[];
+  /** 合わないかもしれない本の傾向 */
+  mismatch?: string;
+  /** 次の本の選び方のヒント */
+  howToChoose?: string;
 }
 
-export const LIMITS = { summary: 120, detail: 140, aftertaste: 70, style: 70, hidden: 90, reason: 70 };
+export const LIMITS = {
+  summary: 120,
+  detail: 140,
+  aftertaste: 70,
+  style: 70,
+  hidden: 90,
+  reason: 70,
+  catchphrase: 30,
+  patternTitle: 20,
+  patternBody: 90,
+  connection: 90,
+  point: 60,
+  mismatch: 90,
+  howToChoose: 100,
+};
 
 /** 断定・評価に聞こえて避けたい言い回し */
 export const NG_WORDS = ['性格', '頭がいい', '頭が悪い', 'IQ', '異常', '天才', '凡人'];
@@ -112,7 +139,13 @@ export const ANALYSIS_SYSTEM = `あなたは読書傾向を言葉にする、や
 - 性格・能力・心の状態を決めつけない。「性格」「頭がいい」などの評価の言葉を使わない。
 - 本の結末、犯人、仕掛けの中身などネタバレを書かない。作品について書くのは、渡した note と一般によく知られた特徴の範囲だけ。
 - 本の題名を書くときは『』で囲む。渡していない本の題名は、おすすめ（recommendations）以外では書かない。
-- 文字数の上限を守る：summary ${LIMITS.summary}字、detail ${LIMITS.detail}字、aftertaste と style ${LIMITS.aftertaste}字、hidden ${LIMITS.hidden}字、reason ${LIMITS.reason}字。
+- 文字数の上限を守る：summary ${LIMITS.summary}字、detail ${LIMITS.detail}字、aftertaste と style ${LIMITS.aftertaste}字、hidden ${LIMITS.hidden}字、reason ${LIMITS.reason}字、catchphrase ${LIMITS.catchphrase}字、patterns の title ${LIMITS.patternTitle}字・body ${LIMITS.patternBody}字、connections の text ${LIMITS.connection}字、per_book の point ${LIMITS.point}字、mismatch ${LIMITS.mismatch}字、how_to_choose ${LIMITS.howToChoose}字。
+- catchphrase は、その人の読み筋を言い表す短い二つ名（例：「静かな謎に耳をすます人」）。タイプ名をそのまま繰り返さない。
+- patterns は、選んだ本や「好きなところ」から見える読み方のくせを2〜3個。抽象的な言葉だけで終わらせず、本の具体的な特徴に結びつける。
+- connections は、ジャンルの違う本どうしに共通する面白さを1〜2個。book_ids に2冊のidを入れる。
+- per_book は、選ばれた本すべてについて、この人が惹かれていそうなところを1文ずつ。liked（好きなところ）があればそれを生かす。
+- mismatch は、得点の低い面白さから、合わないかもしれない本の傾向をやわらかく1〜2文。特定の本や作家をけなさない。
+- how_to_choose は、次の本を探すときの具体的なヒント（キーワード、読み方、棚の歩き方など）を1〜2文。
 
 おすすめのルール：
 - 実在する本だけを挙げる。題名と著者名は、日本で流通している表記で正確に書く。自信がない本は挙げない。
@@ -129,6 +162,9 @@ export function analysisUserPrompt(ctx: AnalysisContext): string {
 - 好きな読後感：${TAGS[s.aftertaste].label}　好きな語り方：${TAGS[s.style].label}
 - 選んだ本でいちばん多いジャンル：${s.majorityGenre}　メインの面白さがジャンルをまたいでいるか：${s.crossGenre ? 'はい' : 'いいえ'}
 - 隠れた好み：${s.hidden ? TAGS[s.hidden].label : 'なし'}
+- 好みの集中度：${s.focus}（${s.focusType}）　いちばん得点の低い面白さ：${TAGS[s.contrast].label}
+- 読後感の得点：${JSON.stringify(Object.fromEntries(AFTERTASTE_TAGS.map((t) => [TAGS[t].label, s.scores[t]])))}
+- 語り方の得点：${JSON.stringify(Object.fromEntries(STYLE_TAGS.map((t) => [TAGS[t].label, s.scores[t]])))}
 - メインの得点に効いた本（id）：${s.evidence.map((e) => e.bookId).join(', ')}
 
 選ばれた本：
@@ -155,6 +191,12 @@ ${JSON.stringify(
  "style": "好きな語り方について1文",
  "hidden": ${s.hidden ? '"隠れた好みについて1文"' : 'null'},
  "evidence": [{"book_id": "メインの得点に効いた本のid", "reason": "その本がメインの面白さにどう効いたか1文"}],
+ "catchphrase": "読み筋をひと言で",
+ "patterns": [{"title": "くせの名前", "body": "具体的な説明1〜2文"}],
+ "connections": [{"book_ids": ["id1", "id2"], "text": "2冊に共通する面白さ1文"}],
+ "per_book": [{"book_id": "選ばれた本のid", "point": "惹かれていそうなところ1文"}],
+ "mismatch": "合わないかもしれない本の傾向",
+ "how_to_choose": "次の本の選び方のヒント",
  "recommendations": [{"title": "題名", "author": "著者", "reason": "すすめる理由1文", "tags": ["mechanism"], "surprise": false}]
 }`;
 }
@@ -218,7 +260,55 @@ export function validateAnalysis(raw: unknown, ctx: AnalysisContext): AnalysisTe
     recommendations.push({ title, author, reason, tags, surprise: rec.surprise === true });
   }
 
-  return { summary, detail, aftertaste, style, hidden, evidence, recommendations };
+  // 詳しい分析：1項目ずつ検査し、だめな項目だけ捨てる（全体はやり直さない）
+  const soft = (v: unknown, limit: number): string | undefined => {
+    try {
+      const t = cleanText(v, limit);
+      checkTitles(t, selectedTitles);
+      return t;
+    } catch {
+      return undefined;
+    }
+  };
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
+  const ids = new Set(ctx.books.map((b) => b.id));
+
+  const catchphrase = soft(r.catchphrase, LIMITS.catchphrase);
+  const patterns = arr(r.patterns)
+    .map((p) => ({ title: soft(p?.title, LIMITS.patternTitle), body: soft(p?.body, LIMITS.patternBody) }))
+    .filter((p): p is { title: string; body: string } => !!p.title && !!p.body)
+    .slice(0, 3);
+  const connections = arr(r.connections)
+    .map((c) => {
+      const bookIds = (Array.isArray(c?.book_ids) ? c.book_ids : []).map(String).filter((id) => ids.has(id));
+      return { bookIds: [...new Set(bookIds)].slice(0, 2), text: soft(c?.text, LIMITS.connection) };
+    })
+    .filter((c): c is { bookIds: string[]; text: string } => c.bookIds.length === 2 && !!c.text)
+    .slice(0, 2);
+  const perBook: { bookId: string; point: string }[] = [];
+  for (const pb of arr(r.per_book)) {
+    const bookId = String(pb?.book_id ?? '');
+    const point = soft(pb?.point, LIMITS.point);
+    if (ids.has(bookId) && point && !perBook.some((x) => x.bookId === bookId)) perBook.push({ bookId, point });
+  }
+  const mismatch = soft(r.mismatch, LIMITS.mismatch);
+  const howToChoose = soft(r.how_to_choose, LIMITS.howToChoose);
+
+  return {
+    summary,
+    detail,
+    aftertaste,
+    style,
+    hidden,
+    evidence,
+    recommendations,
+    catchphrase,
+    patterns,
+    connections,
+    perBook,
+    mismatch,
+    howToChoose,
+  };
 }
 
 /** 2回目が検査に通らなかったときの、人が書いた定型文 */
