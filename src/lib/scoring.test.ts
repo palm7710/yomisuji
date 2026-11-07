@@ -14,10 +14,10 @@ const books: TaggedBook[] = [
 ];
 
 describe('score', () => {
-  it('仕組み寄りの好きなところを選ぶと「仕組みを解く人」になる', () => {
+  it('仕組み寄りの好きなところを選ぶと「仕組みを解き明かす人」になる', () => {
     const r = score({ books, disliked: [], favorite: 'santai', likes: ['santai:mechanism', 'sugaku:mechanism', 'jirai:mechanism'] });
     expect(r.main).toBe('mechanism');
-    expect(r.typeName).toBe('仕組みを解く人');
+    expect(r.typeName).toBe('仕組みを解き明かす人');
     expect(r.evidence[0].bookId).toBe('santai');
     expect(r.evidence[0].liked).toBe(true);
     expect(r.evidence.reduce((a, e) => a + e.share, 0)).toBeGreaterThanOrEqual(80);
