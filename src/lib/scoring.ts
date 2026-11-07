@@ -71,9 +71,9 @@ export interface ScoringResult {
 
 export type FocusType = 'focused' | 'balanced' | 'wide';
 export const FOCUS_LABEL: Record<FocusType, { name: string; text: string }> = {
-  focused: { name: '一点集中型', text: '惹かれる面白さがはっきり決まっていて、そこを深く掘り下げる読み方です。' },
+  focused: { name: '一点集中型', text: 'ジャンルが違っても、惹かれる面白さははっきり決まっている読み方です。好きな面白さを深く掘り下げられます。' },
   balanced: { name: '軸＋寄り道型', text: '軸になる面白さを持ちつつ、ときどき別の面白さにも寄り道する読み方です。' },
-  wide: { name: '雑食型', text: 'いろいろな面白さを広く楽しめる読み方です。' },
+  wide: { name: '雑食型', text: '小説でも実用書でも、いろいろな面白さを広く楽しめる読み方です。' },
 };
 
 export function score(input: ScoringInput): ScoringResult {
