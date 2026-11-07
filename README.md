@@ -62,7 +62,8 @@ GOOGLE_BOOKS_API_BASE=http://localhost:4010/books/v1/volumes DEEPSEEK_MOCK=1 npm
 
 - **DEEPSEEK_API_KEY（必須）：** 未設定だと診断APIは「準備ができていません」を返します。
 - **GOOGLE_BOOKS_API_KEY：** なくても動きますが、上限が低くなります。Google Cloud で、このキーを「Books API」だけに制限してください。
-- **Upstash Redis：** `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` を設定します。Vercel などのサーバーレス環境ではファイル保存が消えるため必須です。
+- **Cloudflare Workers：** `cloudflare.config.ts` の `YOMISUJI_DATA` KVに診断結果と本タグを保存します。
+- **その他のサーバーレス環境：** `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` を設定します。未設定時のファイル保存はローカル開発専用です。
 - **関数の制限時間：** 診断APIは DeepSeek を2回呼ぶので、20〜40秒かかります。制限時間は60秒に設定済みです（`maxDuration`）。
 
 ## 注意
