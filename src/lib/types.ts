@@ -12,6 +12,8 @@ export interface DiagnoseRequest {
   likes?: string[];
   /** 合わなかった本の volumeId（3冊まで） */
   disliked?: string[];
+  /** 検索画面でシリーズとして選んだときの表示名（volumeId → シリーズ名） */
+  seriesTitles?: Record<string, string>;
 }
 
 export interface ResultBook extends PublicBookMeta {
