@@ -103,6 +103,26 @@ describe('シリーズのまとめ表示と人気順', () => {
       .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
     expect(collapseBookSeries(books).map((book) => book.volumeId)).toEqual(['popular', 'related', 'unrated']);
   });
+
+  it('人気度より先に題名の完全一致を優先する', () => {
+    const books = [
+      vol('popular-related', '誰にも言えない秘密の告白', ['編集部'], { ratings: 500 }),
+      vol('exact', '告白', ['湊かなえ'], { ratings: 20 }),
+    ]
+      .map(parseVolume)
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
+    expect(collapseBookSeries(books, '告白').map((book) => book.volumeId)).toEqual(['exact', 'popular-related']);
+  });
+
+  it('著者名検索では本人の著作を優先する', () => {
+    const books = [
+      vol('guide', '東野圭吾公式ガイド', ['編集部'], { ratings: 100 }),
+      vol('novel', '流星の絆', ['東野圭吾'], { ratings: 10 }),
+    ]
+      .map(parseVolume)
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
+    expect(collapseBookSeries(books, '東野圭吾').map((book) => book.volumeId)).toEqual(['novel', 'guide']);
+  });
 });
 
 describe('通信', () => {
