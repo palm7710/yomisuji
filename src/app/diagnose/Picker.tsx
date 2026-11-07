@@ -5,24 +5,25 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LIKE_OPTIONS } from '@/data/likes';
 import { AiNotice, CoverImage, GoogleAttribution } from '@/components/BookCover';
-import type { PublicBookMeta } from '@/lib/googleBooks';
+import type { SearchBookMeta } from '@/lib/googleBooks';
 import { MAX_BOOKS, MAX_DISLIKED, MAX_LIKE_BOOKS, MIN_BOOKS } from '@/lib/scoring';
 
 const STORAGE_KEY = 'yomisuji:draft:v4';
 const PROGRESS = ['本の情報を集めています', 'AIが本ごとの面白さを読み解いています', 'あなたの読み筋を計算しています', 'AIが説明文とおすすめを書いています', 'おすすめの本を Google Books で確かめています'];
 
 interface Draft {
-  selected: PublicBookMeta[];
+  selected: SearchBookMeta[];
   favorite: string;
   likes: string[];
-  disliked: PublicBookMeta[];
+  disliked: SearchBookMeta[];
 }
 
 const EMPTY: Draft = { selected: [], favorite: '', likes: [], disliked: [] };
+const displayTitle = (book: SearchBookMeta) => book.seriesTitle ?? book.title;
 
 /** Google Books の検索（入力が止まって0.4秒後に検索する） */
 function useBookSearch(query: string) {
-  const [results, setResults] = useState<PublicBookMeta[] | null>(null);
+  const [results, setResults] = useState<SearchBookMeta[] | null>(null);
   const [searching, setSearching] = useState(false);
   const seqRef = useRef(0);
 
@@ -38,7 +39,7 @@ function useBookSearch(query: string) {
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/books/search?q=${encodeURIComponent(q)}`);
-        const json = (await res.json()) as { books: PublicBookMeta[] };
+        const json = (await res.json()) as { books: SearchBookMeta[] };
         if (seq === seqRef.current) setResults(json.books);
       } catch {
         if (seq === seqRef.current) setResults([]);
@@ -98,16 +99,16 @@ export function Picker() {
   const ready = count >= MIN_BOOKS;
   const full = count >= MAX_BOOKS;
 
-  const addBook = (b: PublicBookMeta) => {
+  const addBook = (b: SearchBookMeta) => {
     if (selectedIds.has(b.volumeId) || full) return;
     setDraft((d) => ({ ...d, selected: [...d.selected, b], disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
     // 選んだら検索を閉じて、選んだ本の並びに戻る
     setQuery('');
-    setJustAdded(b.title);
+    setJustAdded(displayTitle(b));
     inputRef.current?.focus();
   };
 
-  const removeBook = (b: PublicBookMeta) =>
+  const removeBook = (b: SearchBookMeta) =>
     setDraft((d) => ({
       ...d,
       selected: d.selected.filter((x) => x.volumeId !== b.volumeId),
@@ -118,14 +119,14 @@ export function Picker() {
   const toggleLike = (key: string) =>
     setDraft((d) => ({ ...d, likes: d.likes.includes(key) ? d.likes.filter((k) => k !== key) : [...d.likes, key] }));
 
-  const addDisliked = (b: PublicBookMeta) => {
+  const addDisliked = (b: SearchBookMeta) => {
     setDraft((d) => {
       if (d.disliked.some((x) => x.volumeId === b.volumeId) || d.disliked.length >= MAX_DISLIKED || selectedIds.has(b.volumeId)) return d;
       return { ...d, disliked: [...d.disliked, b] };
     });
     setDislikeQuery('');
   };
-  const removeDisliked = (b: PublicBookMeta) => setDraft((d) => ({ ...d, disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
+  const removeDisliked = (b: SearchBookMeta) => setDraft((d) => ({ ...d, disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
 
   const submit = async (withDetails: boolean) => {
     setBusy(true);
@@ -212,7 +213,8 @@ export function Picker() {
                           <CoverImage book={b} />
                         </span>
                         <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
-                          <span className="book-title" style={{ fontSize: 14 }}>{b.title}</span>
+                          <span className="book-title" style={{ fontSize: 14 }}>{displayTitle(b)}</span>
+                          {(b.seriesCount ?? 0) > 1 && <span className="small muted">同シリーズの{b.seriesCount}件をまとめて表示</span>}
                           <span className="book-author">
                             {b.authors.join('、')}
                             {b.publishedDate ? `・${b.publishedDate.slice(0, 4)}` : ''}
@@ -242,12 +244,12 @@ export function Picker() {
               <h2 id="sel-h" className="label" style={{ marginBottom: 12 }}>選んだ本（タップで外す）</h2>
               <div className="book-grid">
                 {draft.selected.map((b) => (
-                  <button key={b.volumeId} className="book-tile" onClick={() => removeBook(b)} aria-label={`『${b.title}』を外す`}>
+                  <button key={b.volumeId} className="book-tile" onClick={() => removeBook(b)} aria-label={`『${displayTitle(b)}』を外す`}>
                     <CoverImage book={b} />
                     <span className="check remove" aria-hidden="true">
                       <CloseIcon />
                     </span>
-                    <span className="book-title">{b.title}</span>
+                    <span className="book-title">{displayTitle(b)}</span>
                     <span className="book-author">{b.authors.join('、')}</span>
                   </button>
                 ))}
@@ -306,7 +308,7 @@ export function Picker() {
                 aria-pressed={draft.favorite === b.volumeId}
                 onClick={() => setDraft((d) => ({ ...d, favorite: d.favorite === b.volumeId ? '' : b.volumeId }))}
               >
-                {b.title}
+                {displayTitle(b)}
               </button>
             ))}
           </div>
@@ -315,7 +317,7 @@ export function Picker() {
         {likeBooks.map((b) => (
           <section key={b.volumeId} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <h2 style={{ margin: 0, fontSize: 13, fontWeight: 500 }} className="muted">
-              <span className="serif" style={{ fontWeight: 800, fontSize: 16, color: 'var(--ink)' }}>{b.title}</span>　のどこが好き？<span style={{ fontSize: 12 }}>（いくつでも）</span>
+              <span className="serif" style={{ fontWeight: 800, fontSize: 16, color: 'var(--ink)' }}>{displayTitle(b)}</span>　のどこが好き？<span style={{ fontSize: 12 }}>（いくつでも）</span>
             </h2>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {LIKE_OPTIONS.map((o) => {
@@ -344,8 +346,8 @@ export function Picker() {
               {draft.disliked.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {draft.disliked.map((b) => (
-                    <button key={b.volumeId} className="chip" aria-pressed="true" onClick={() => removeDisliked(b)} aria-label={`『${b.title}』を外す`}>
-                      {b.title} ×
+                    <button key={b.volumeId} className="chip" aria-pressed="true" onClick={() => removeDisliked(b)} aria-label={`『${displayTitle(b)}』を外す`}>
+                      {displayTitle(b)} ×
                     </button>
                   ))}
                 </div>
@@ -367,7 +369,8 @@ export function Picker() {
                                 <CoverImage book={b} />
                               </span>
                               <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
-                                <span className="book-title">{b.title}</span>
+                                <span className="book-title">{displayTitle(b)}</span>
+                                {(b.seriesCount ?? 0) > 1 && <span className="small muted">同シリーズの{b.seriesCount}件をまとめて表示</span>}
                                 <span className="book-author">{b.authors.join('、')}</span>
                               </span>
                               <span className="row-action" aria-hidden="true">
