@@ -26,10 +26,16 @@ export interface BookMeta {
   categories?: string[];
   /** 内容紹介（AIへの手がかりとしてだけ使い、画面には出さない） */
   description?: string;
+  /** Google Books上の評価。検索結果を人気順に近づけるためだけに使う */
+  ratingsCount?: number;
+  averageRating?: number;
+  /** Google Booksが持つシリーズ情報。題名が違う小説も同じシリーズにまとめる */
+  seriesId?: string;
+  seriesOrder?: number;
 }
 
 /** ブラウザに渡してよい項目だけに絞った形 */
-export type PublicBookMeta = Omit<BookMeta, 'description' | 'categories'>;
+export type PublicBookMeta = Omit<BookMeta, 'description' | 'categories' | 'ratingsCount' | 'averageRating' | 'seriesId' | 'seriesOrder'>;
 
 /** 検索画面用。同じ漫画シリーズをまとめたときだけシリーズ名と件数が入る。 */
 export interface SearchBookMeta extends PublicBookMeta {
@@ -38,7 +44,7 @@ export interface SearchBookMeta extends PublicBookMeta {
 }
 
 export function toPublic(m: BookMeta): PublicBookMeta {
-  const { description: _d, categories: _c, ...rest } = m;
+  const { description: _d, categories: _c, ratingsCount: _rc, averageRating: _ar, seriesId: _si, seriesOrder: _so, ...rest } = m;
   return rest;
 }
 
@@ -55,6 +61,11 @@ interface VolumeJson {
     canonicalVolumeLink?: string;
     categories?: string[];
     description?: string;
+    ratingsCount?: number;
+    averageRating?: number;
+    seriesInfo?: {
+      volumeSeries?: { seriesId?: string; orderNumber?: number }[];
+    };
   };
 }
 
@@ -73,6 +84,10 @@ export function parseVolume(v: VolumeJson): BookMeta | null {
     infoLink: toHttps(info.infoLink ?? info.canonicalVolumeLink ?? `https://books.google.com/books?id=${v.id}`),
     categories: info.categories,
     description: info.description ? stripHtml(info.description).slice(0, 600) : undefined,
+    ratingsCount: info.ratingsCount,
+    averageRating: info.averageRating,
+    seriesId: info.seriesInfo?.volumeSeries?.[0]?.seriesId,
+    seriesOrder: info.seriesInfo?.volumeSeries?.[0]?.orderNumber,
   };
 }
 
@@ -96,40 +111,67 @@ export function normalizeTitle(s: string): string {
 export function splitSeriesTitle(title: string): { title: string; volume?: number } {
   const value = title.normalize('NFKC').trim();
   const patterns = [
+    /^(.*?)[\s　]*[（(](\d+|上|中|下|前|後)[）)](?:[\s　]*[（(][^）)]+[）)])+\s*$/i,
+    /^(.*?)[\s　]+(?:第\s*)?(\d+|上|中|下|前|後)\s*(?:巻|集|編|篇|部)?(?:[\s　]*[（(][^）)]+[）)])+\s*$/i,
     /^(.*?)[\s　]*(?:第\s*)?(\d+)\s*(?:巻|集)\s*$/i,
     /^(.*?)[\s　]*[（(](\d+)[）)]\s*$/i,
     /^(.*?)[\s　]+(?:vol(?:ume)?\.?\s*|book\s*)?(\d+)\s*$/i,
+    /^(.*?)[\s　]*(上|中|下|前|後)(?:巻|編|篇)\s*$/,
+    /^(.*?)[\s　]+(上|中|下|前|後)\s*$/,
+    /^(.*?)[\s　]+(?:第\s*)?(\d+)\s*部\s*$/,
   ];
   for (const pattern of patterns) {
     const match = value.match(pattern);
     const base = match?.[1]?.trim();
-    if (base) return { title: base, volume: Number(match![2]) };
+    if (base) {
+      const partOrder: Record<string, number> = { 上: 1, 前: 1, 中: 2, 下: 3, 後: 3 };
+      return { title: base, volume: partOrder[match![2]] ?? Number(match![2]) };
+    }
   }
   return { title: value };
 }
 
-/** 巻違いの検索結果をシリーズ単位にまとめ、未巻数版または若い巻を代表にする。 */
-export function collapseBookSeries(books: PublicBookMeta[]): SearchBookMeta[] {
-  const groups = new Map<string, { title: string; entries: { book: PublicBookMeta; volume?: number; order: number }[] }>();
+function commonSeriesTitle(titles: string[], fallback: string): string {
+  if (titles.length < 2) return fallback;
+  let prefix = titles[0].normalize('NFKC');
+  for (const title of titles.slice(1)) {
+    const value = title.normalize('NFKC');
+    let i = 0;
+    while (i < prefix.length && i < value.length && prefix[i] === value[i]) i++;
+    prefix = prefix.slice(0, i);
+  }
+  const cleaned = prefix.replace(/[\s・、,:：!！?？「」『』()（）\-‐―〜~]+$/g, '').replace(/[との]$/, '').trim();
+  return normalizeTitle(cleaned).length >= 3 ? cleaned : fallback;
+}
+
+/** 巻違い・上下巻・Google Books上の同一シリーズを作品単位にまとめ、人気順に近い順で返す。 */
+export function collapseBookSeries(books: BookMeta[]): SearchBookMeta[] {
+  const groups = new Map<string, { title: string; entries: { book: BookMeta; volume?: number; order: number }[] }>();
   books.forEach((book, order) => {
     const series = splitSeriesTitle(book.title);
     const author = normalizeTitle(book.authors[0] ?? book.publisher ?? '');
-    const key = `${normalizeTitle(series.title)}|${author}`;
+    const key = book.seriesId ? `series:${book.seriesId}` : `title:${normalizeTitle(series.title)}|${author}`;
     const group = groups.get(key) ?? { title: series.title, entries: [] };
-    group.entries.push({ book, volume: series.volume, order });
+    group.entries.push({ book, volume: book.seriesOrder ?? series.volume, order });
     groups.set(key, group);
   });
 
   return [...groups.values()]
-    .sort((a, b) => Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order)))
+    .sort((a, b) => {
+      const popularity = (g: typeof a) => Math.max(0, ...g.entries.map((e) => e.book.ratingsCount ?? 0));
+      const rating = (g: typeof a) => Math.max(0, ...g.entries.map((e) => e.book.averageRating ?? 0));
+      return popularity(b) - popularity(a) || rating(b) - rating(a) || Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order));
+    })
     .map((group) => {
       const representative = [...group.entries].sort((a, b) => {
         if (a.volume === undefined && b.volume !== undefined) return -1;
         if (a.volume !== undefined && b.volume === undefined) return 1;
         return (a.volume ?? Number.MAX_SAFE_INTEGER) - (b.volume ?? Number.MAX_SAFE_INTEGER) || a.order - b.order;
       })[0].book;
-      if (group.entries.length === 1) return representative;
-      return { ...representative, seriesTitle: group.title, seriesCount: group.entries.length };
+      const publicBook = toPublic(representative);
+      if (group.entries.length === 1) return publicBook;
+      const title = commonSeriesTitle(group.entries.map((e) => splitSeriesTitle(e.book.title).title), group.title);
+      return { ...publicBook, seriesTitle: title, seriesCount: group.entries.length };
     });
 }
 
