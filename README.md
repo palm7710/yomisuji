@@ -1,82 +1,72 @@
 # 読み筋診断（仮）
 
-好きな本を選ぶと、ジャンルではなく「物語のどんな構造に惹かれているか」を言葉にする読書タイプ診断です。
-この版は **本選び → 深掘り（任意）→ 診断計算 → 結果画面** までを実装しています。
+好きな本を選ぶと、ジャンルではなく「物語のどんな構造に惹かれているか」をAIが言葉にする読書タイプ診断です。
+
+- **本：** Google Books から検索して、どんな本でも選べます。テーマの棚は選び始めのきっかけです。
+- **タグ・分析・説明文・おすすめ：** DeepSeek が担当します。得点とタイプの計算だけはプログラムで行います（`src/lib/scoring.ts`）。
+- **結果は毎回変わります：** AIが付けるので、同じ本を選んでも診断するたびに結果が変わることがあります。画面にもそう明記しています。シェアされたURLでは、保存した結果をそのまま表示します。
 
 ## 動かし方
 
 ```bash
 npm install
-cp .env.example .env.local   # 必要なら GOOGLE_BOOKS_API_KEY を入れる
+cp .env.example .env.local   # GOOGLE_BOOKS_API_KEY と DEEPSEEK_API_KEY を入れる
 npm run dev                  # http://localhost:3000
 ```
 
 | コマンド | 内容 |
 | --- | --- |
 | `npm run dev` | 開発サーバー |
-| `npm test` | 診断ロジックと Google Books 連携のテスト |
+| `npm test` | テスト（Google Books と DeepSeek は模擬の返り値で試す） |
 | `npm run typecheck` | 型チェック |
 | `npm run build` / `npm start` | 本番ビルドと起動 |
-| `npm run books:resolve` | 作品リストの各本を Google Books で検索し、volumeId を固定する |
 
-## Google Books の使い方
-
-- 書誌情報（表紙・出版社・Google Books へのリンク）だけを Google Books から取ります。診断に使うタグの重みは自前の作品リストにあります。
-- 取得はサーバー側だけで行い（`src/lib/googleBooks.ts`）、結果は Next.js のキャッシュに1日保存します。
-- 取れなかった本は、書名だけの表紙で表示を続けます。診断はGoogle Booksにつながらなくても動きます。
-- **APIキー：** なくても動きますが、1日の上限が低くなります。Google Cloud コンソールで「Books API」を有効にしてキーを作り、`.env.local` の `GOOGLE_BOOKS_API_KEY` に入れてください。
-- **volumeId の固定（推奨）：** `npm run books:resolve` を一度実行すると、`src/data/google-volume-ids.json` に各本の volumeId が書かれます。毎回の検索より速く、別の版を拾う取り違えも防げます。あわせて出る `scripts/resolve-report.md` で、書名・著者・出版社が正しい版かを確認してください。
-- **表示のルール（[ブランドガイドライン](https://developers.google.com/books/branding)）：** Google Books のデータを出す画面には「Powered by Google」を添え、各書籍から Google Books のページへリンクしています。公開前に、公式のロゴ画像に差し替えてください。
-- **利用規約（[Terms of Service](https://developers.google.com/books/terms)）：** アプリの利用者から料金を取る場合は Google との別契約が必要です。権利者からの削除依頼の連絡先を公開する必要もあります。
-
-### つながらない環境での開発
-
-模擬サーバーで、表紙つきの表示を確かめられます。
+### キーがなくても画面を試す
 
 ```bash
 node scripts/mock-google-books.mjs &
-GOOGLE_BOOKS_API_BASE=http://localhost:4010/books/v1/volumes npm run dev
+GOOGLE_BOOKS_API_BASE=http://localhost:4010/books/v1/volumes DEEPSEEK_MOCK=1 npm run dev
 ```
+
+## 診断の流れ（`src/lib/analyze.ts`）
+
+1. 選ばれた本（5〜15冊）の書誌を Google Books から取る。分類と内容紹介はAIへの手がかりとしてだけ使う
+2. **DeepSeek 1回目：** 本ごとに18種のタグの重み（0〜3）、ジャンル、ネタバレなしの短いメモを付ける
+3. タグからプログラムで得点・タイプ・確からしさ・根拠の本・隠れた好みを計算する
+4. **DeepSeek 2回目：** 説明文と、おすすめの候補6冊を書く
+5. 返り値を検査する。題名のずれ、避けたい言葉、長すぎる文などを見る。2回とも不合格なら、人が書いた定型文に切り替える
+6. おすすめの候補を Google Books で検索し、実在して選ばれていない本を3冊だけ残す（架空の本は出ない）
+7. 結果を保存して `/r/<ID>` に移る
+
+## 本番で必要な設定
+
+- **DEEPSEEK_API_KEY（必須）：** 未設定だと診断APIは「準備ができていません」を返します。
+- **GOOGLE_BOOKS_API_KEY：** なくても動きますが、上限が低くなります。Google Cloud で、このキーを「Books API」だけに制限してください。
+- **Upstash Redis：** `UPSTASH_REDIS_REST_URL` と `UPSTASH_REDIS_REST_TOKEN` を設定します。Vercel などのサーバーレス環境ではファイル保存が消えるため必須です。
+- **関数の制限時間：** 診断APIは DeepSeek を2回呼ぶので、20〜40秒かかります。制限時間は60秒に設定済みです（`maxDuration`）。
+
+## 注意
+
+- **個人情報保護：** DeepSeek に送るのは、本の書誌と選択内容だけです。個人情報保護委員会は、DeepSeek のデータは中国のサーバーに保存され、中国の法律が適用されると注意を促しています。結果画面にもAI事業者に送ることを書いていますが、公開前にプライバシーポリシーへの記載と法務の確認をしてください。
+- **Google Books：** 「Powered by Google」の表記と、各書籍から Google Books へのリンクを付けています。公開前に公式のロゴ画像に差し替えてください。利用者から料金を取る場合は、Google との別契約が必要です。
+- **回数制限：** IPごとに10分で10回までに制限していますが、サーバー1台の中でしか数えていません。本番では Upstash などで数えるか、DeepSeek の1日の費用上限を設定してください。
 
 ## ファイル構成
 
 ```
 src/
-  data/tags.ts            物語構造タグ（3層18種）、タイプ名、修飾語、一言コピー
-  data/books.ts           作品リスト（30冊）、タグの重み、「どこが好き？」の選択肢
-  data/google-volume-ids.json  books:resolve で固定した volumeId
-  lib/diagnose.ts         診断ロジック（同じ入力なら必ず同じ結果）
-  lib/selection.ts        診断の入力と結果ページURLの変換
-  lib/googleBooks.ts      Google Books からの取得
-  app/page.tsx            トップ
-  app/diagnose/           本選び・深掘り（クライアント側の画面）
-  app/result/             結果画面、Xへの投稿・リンクのコピー
-scripts/
-  resolve-google-ids.mjs  volumeId の固定
-  mock-google-books.mjs   開発用の模擬サーバー
+  data/tags.ts             物語構造タグ（3層18種）、ジャンル、タイプ名、修飾語
+  data/books.ts            テーマの棚に並べる本（書名と著者だけ）
+  lib/googleBooks.ts       Google Books：検索・1冊の取得・書名と著者での特定
+  lib/deepseek.ts          DeepSeek API の呼び出し（JSONモード、1回やり直し、模擬モード）
+  lib/prompts.ts           AIへの指示文と返り値の検査、定型文
+  lib/scoring.ts           得点とタイプの計算
+  lib/analyze.ts           診断全体の流れ
+  lib/store.ts             結果の保存（Upstash Redis またはファイル）
+  lib/mock.ts              模擬AI
+  app/api/books/search/    本の検索API
+  app/api/diagnose/        診断API
+  app/diagnose/            本選び・深掘りの画面
+  app/r/[id]/              結果画面
+scripts/mock-google-books.mjs  開発用の模擬 Google Books
 ```
-
-## 結果ページのURL
-
-`/result?v=1&b=hacker,jirai,rokunin,santai,sugaku&f=santai&l=santai:0,jirai:0&x=goal`
-
-| 引数 | 意味 |
-| --- | --- |
-| `b` | 選んだ本（5〜15冊） |
-| `f` | いちばん好きな1冊 |
-| `l` | 「どこが好き？」で選んだもの（`本ID:選択肢の番号`） |
-| `x` | 合わなかった本（3冊まで） |
-
-データベースは使わず、URLから毎回計算し直します。
-
-## まだやっていないこと
-
-- **作品データ：** タグの重みと「どこが好き？」の選択肢は仮の値です。公開前に2人以上で確認してください。作品数も、要件どおり50〜60冊に増やす必要があります。
-- **未実装の機能：** 次のものは後回しにしています。
-  - DeepSeek による説明文。いまは定型文で、DeepSeek導入後も検査に落ちたときの代わりの文として残す想定です。
-  - 結果の保存
-  - シェア用のカード画像（OGP）
-  - 友だちとの相性
-  - 「当たってる？」の記録
-- **アプリ名：** アプリ名とドメインは決まっていません。
-# yomisuji
