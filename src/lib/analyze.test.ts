@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BadRequestError, normalizeRequest, runDiagnosis } from './analyze';
+import { BadRequestError, expandLikes, normalizeRequest, runDiagnosis } from './analyze';
 import { loadResult } from './store';
 
 const IDS = ['vol00001', 'vol00002', 'vol00003', 'vol00004', 'vol00005'];
@@ -58,12 +58,18 @@ afterEach(() => {
   delete process.env.DEEPSEEK_API_KEY;
 });
 
+describe('expandLikes', () => {
+  it('選択肢を計算用のタグに置き換える', () => {
+    expect(expandLikes(['vol00001:moved', 'vol00002:insight'])).toEqual(['vol00001:lingering', 'vol00001:loss', 'vol00002:mechanism']);
+  });
+});
+
 describe('normalizeRequest', () => {
   it('重複・不正なID・選んでいない本への回答を捨てる', () => {
-    const r = normalizeRequest({ books: [...IDS, IDS[0], '../x'], favorite: 'nope', likes: ['vol00001:mechanism', 'vol00001:warm', 'other:lies'], disliked: ['vol00001', 'vol00009'] });
+    const r = normalizeRequest({ books: [...IDS, IDS[0], '../x'], favorite: 'nope', likes: ['vol00001:insight', 'vol00001:nope', 'other:honest'], disliked: ['vol00001', 'vol00009'] });
     expect(r.books).toEqual(IDS);
     expect(r.favorite).toBe('');
-    expect(r.likes).toEqual(['vol00001:mechanism']);
+    expect(r.likes).toEqual(['vol00001:insight']);
     expect(r.disliked).toEqual(['vol00009']);
   });
   it('5冊未満は受け付けない', () => {
@@ -74,7 +80,7 @@ describe('normalizeRequest', () => {
 describe('runDiagnosis', () => {
   it('タグ付け→計算→文章→おすすめの実在確認→保存までつながる', async () => {
     const sent = stubFetch([tagging, analysis]);
-    const r = await runDiagnosis({ books: IDS, favorite: 'vol00001', likes: ['vol00001:mechanism'] });
+    const r = await runDiagnosis({ books: IDS, favorite: 'vol00001', likes: ['vol00001:insight'] });
 
     expect(r.scoring.main).toBe('mechanism');
     expect(r.fallbackText).toBe(false);
