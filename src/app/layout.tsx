@@ -2,8 +2,21 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
+  // シェア画像のURLを絶対URLにするための公開先。本番では SITE_URL を設定する
+  metadataBase: new URL(process.env.SITE_URL ?? 'http://localhost:3000'),
   title: '読み筋診断（仮）',
-  description: '好きな本を選ぶと、あなたが惹かれている物語のかたちがわかる読書タイプ診断',
+  description: '小説もマンガも実用書も。好きな本から、本当に惹かれているものを言葉にする読書タイプ診断',
+  openGraph: {
+    title: '読み筋診断（仮）',
+    description: '小説もマンガも実用書も。好きな本から、本当に惹かれているものを言葉にする読書タイプ診断',
+    images: [{ url: '/yomisuji-intro.png', width: 1734, height: 907, alt: '読み筋診断の紹介' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: '読み筋診断（仮）',
+    description: '小説もマンガも実用書も。好きな本から、本当に惹かれているものを言葉にする読書タイプ診断',
+    images: ['/yomisuji-intro.png'],
+  },
 };
 
 export const viewport: Viewport = {
