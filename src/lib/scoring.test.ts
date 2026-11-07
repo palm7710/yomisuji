@@ -59,4 +59,12 @@ describe('score', () => {
   it('5冊未満はエラー', () => {
     expect(() => score({ books: books.slice(0, 3), disliked: [], likes: [] })).toThrow();
   });
+  it('好みの集中度と、近いタイプ・刺激をくれるタイプを出す', () => {
+    const r = score({ books, disliked: [], likes: [] });
+    expect(r.focus).toBeGreaterThan(0);
+    expect(r.focus).toBeLessThanOrEqual(100);
+    expect(['focused', 'balanced', 'wide']).toContain(r.focusType);
+    expect(r.partner).toBe(r.sub);
+    expect(r.contrast).not.toBe(r.main);
+  });
 });
