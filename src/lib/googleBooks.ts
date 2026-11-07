@@ -144,8 +144,8 @@ function commonSeriesTitle(titles: string[], fallback: string): string {
   return normalizeTitle(cleaned).length >= 3 ? cleaned : fallback;
 }
 
-/** 巻違い・上下巻・Google Books上の同一シリーズを作品単位にまとめ、人気順に近い順で返す。 */
-export function collapseBookSeries(books: BookMeta[]): SearchBookMeta[] {
+/** 巻違い・上下巻・Google Books上の同一シリーズを作品単位にまとめ、検索語に合う人気作品から返す。 */
+export function collapseBookSeries(books: BookMeta[], query = ''): SearchBookMeta[] {
   const groups = new Map<string, { title: string; entries: { book: BookMeta; volume?: number; order: number }[] }>();
   books.forEach((book, order) => {
     const series = splitSeriesTitle(book.title);
@@ -158,9 +158,29 @@ export function collapseBookSeries(books: BookMeta[]): SearchBookMeta[] {
 
   return [...groups.values()]
     .sort((a, b) => {
+      const queryKey = normalizeTitle(query);
+      const textMatch = (value: string) => {
+        const key = normalizeTitle(value);
+        if (!queryKey || !key) return 0;
+        if (key === queryKey) return 5;
+        if (queryKey.startsWith(key) || key.startsWith(queryKey)) return 4;
+        if (queryKey.includes(key) || key.includes(queryKey)) return 3;
+        return 0;
+      };
+      const match = (g: typeof a) =>
+        Math.max(
+          textMatch(g.title),
+          ...g.entries.flatMap((e) => [textMatch(e.book.title), ...e.book.authors.map(textMatch)]),
+        );
       const popularity = (g: typeof a) => Math.max(0, ...g.entries.map((e) => e.book.ratingsCount ?? 0));
       const rating = (g: typeof a) => Math.max(0, ...g.entries.map((e) => e.book.averageRating ?? 0));
-      return popularity(b) - popularity(a) || rating(b) - rating(a) || Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order));
+      return (
+        match(b) - match(a) ||
+        popularity(b) - popularity(a) ||
+        b.entries.length - a.entries.length ||
+        rating(b) - rating(a) ||
+        Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order))
+      );
     })
     .map((group) => {
       const representative = [...group.entries].sort((a, b) => {
