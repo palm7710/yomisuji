@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildFindUrl, collapseBookSeries, findBook, getVolume, normalizeTitle, parseVolume, pickBestMatch, searchBooks, splitSeriesTitle, toPublic } from './googleBooks';
 
 // Google Books API の返り値の形を模した見本（中身は試験用）
-const vol = (id: string, title: string, authors: string[], opts: { thumb?: boolean; desc?: string } = {}) => ({
+const vol = (
+  id: string,
+  title: string,
+  authors: string[],
+  opts: { thumb?: boolean; desc?: string; ratings?: number; rating?: number; seriesId?: string; order?: number } = {},
+) => ({
   id,
   volumeInfo: {
     title,
@@ -10,6 +15,9 @@ const vol = (id: string, title: string, authors: string[], opts: { thumb?: boole
     publisher: '試験出版',
     categories: ['Fiction'],
     description: opts.desc,
+    ratingsCount: opts.ratings,
+    averageRating: opts.rating,
+    seriesInfo: opts.seriesId ? { volumeSeries: [{ seriesId: opts.seriesId, orderNumber: opts.order }] } : undefined,
     imageLinks: opts.thumb === false ? undefined : { thumbnail: `http://books.google.com/books/content?id=${id}&printsec=frontcover&img=1&zoom=1&edge=curl` },
     infoLink: `http://books.google.co.jp/books?id=${id}`,
   },
@@ -25,9 +33,11 @@ describe('parseVolume', () => {
     expect(m.description).toBe('地球文明と');
   });
   it('ブラウザに渡す形には内容紹介と分類を含めない', () => {
-    const pub = toPublic(parseVolume(vol('abc', '三体', ['劉慈欣'], { desc: 'x' }))!);
+    const pub = toPublic(parseVolume(vol('abc', '三体', ['劉慈欣'], { desc: 'x', ratings: 20, seriesId: 'series-1' }))!);
     expect(pub).not.toHaveProperty('description');
     expect(pub).not.toHaveProperty('categories');
+    expect(pub).not.toHaveProperty('ratingsCount');
+    expect(pub).not.toHaveProperty('seriesId');
   });
   it('書名がなければ使わない', () => {
     expect(parseVolume({ id: 'x', volumeInfo: {} })).toBeNull();
@@ -50,23 +60,48 @@ describe('pickBestMatch', () => {
   });
 });
 
-describe('漫画シリーズのまとめ表示', () => {
-  it('題名の途中の数字は残し、末尾の巻数だけを分ける', () => {
+describe('シリーズのまとめ表示と人気順', () => {
+  it('題名の途中の数字は残し、末尾の巻数・上下巻だけを分ける', () => {
     expect(splitSeriesTitle('3月のライオン 17')).toEqual({ title: '3月のライオン', volume: 17 });
     expect(splitSeriesTitle('ONE PIECE 第100巻')).toEqual({ title: 'ONE PIECE', volume: 100 });
     expect(splitSeriesTitle('NARUTO Vol. 12')).toEqual({ title: 'NARUTO', volume: 12 });
+    expect(splitSeriesTitle('海辺のカフカ 上')).toEqual({ title: '海辺のカフカ', volume: 1 });
+    expect(splitSeriesTitle('海辺のカフカ 下巻')).toEqual({ title: '海辺のカフカ', volume: 3 });
+    expect(splitSeriesTitle('海辺のカフカ（上）（新潮文庫）')).toEqual({ title: '海辺のカフカ', volume: 1 });
+    expect(splitSeriesTitle('海辺のカフカ（下）（新潮文庫）')).toEqual({ title: '海辺のカフカ', volume: 3 });
+    expect(splitSeriesTitle('大河小説 第2部')).toEqual({ title: '大河小説', volume: 2 });
     expect(splitSeriesTitle('1984')).toEqual({ title: '1984' });
   });
 
   it('同じ著者の巻違いをまとめ、若い巻を代表にする', () => {
     const books = [vol('v3', 'キングダム 3', ['原泰久']), vol('v1', 'キングダム 1', ['原泰久']), vol('other', 'キングダム 1', ['別の著者'])]
       .map(parseVolume)
-      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null)
-      .map(toPublic);
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
     const grouped = collapseBookSeries(books);
     expect(grouped).toHaveLength(2);
     expect(grouped[0]).toMatchObject({ volumeId: 'v1', seriesTitle: 'キングダム', seriesCount: 2 });
     expect(grouped[1]).toMatchObject({ volumeId: 'other' });
+  });
+
+  it('Google BooksのシリーズIDが同じなら題名の異なる小説もまとめる', () => {
+    const books = [
+      vol('hp2', 'ハリー・ポッターと秘密の部屋', ['J.K.ローリング'], { seriesId: 'hp', order: 2 }),
+      vol('hp1', 'ハリー・ポッターと賢者の石', ['J.K.ローリング'], { seriesId: 'hp', order: 1 }),
+    ]
+      .map(parseVolume)
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
+    expect(collapseBookSeries(books)[0]).toMatchObject({ volumeId: 'hp1', seriesTitle: 'ハリー・ポッター', seriesCount: 2 });
+  });
+
+  it('評価件数が多い作品を先にし、評価がなければ関連度順を保つ', () => {
+    const books = [
+      vol('related', '検索語に近い本', ['著者A']),
+      vol('popular', '人気の本', ['著者B'], { ratings: 120, rating: 4.2 }),
+      vol('unrated', '評価なしの本', ['著者C']),
+    ]
+      .map(parseVolume)
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
+    expect(collapseBookSeries(books).map((book) => book.volumeId)).toEqual(['popular', 'related', 'unrated']);
   });
 });
 
