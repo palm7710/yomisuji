@@ -15,8 +15,11 @@ import { mockAnalysis, mockTagging } from './mock';
 import {
   ANALYSIS_SYSTEM,
   TAGGING_SYSTEM,
+  analysisMaxTokens,
   analysisUserPrompt,
   fallbackText,
+  parseTaggingPartial,
+  taggingMaxTokens,
   taggingUserPrompt,
   validateAnalysis,
   validateTagging,
@@ -25,7 +28,7 @@ import {
   type BookTagging,
 } from './prompts';
 import { MAX_BOOKS, MAX_DISLIKED, MIN_BOOKS, score } from './scoring';
-import { newResultId, saveResult } from './store';
+import { loadTags, newResultId, saveResult, saveTags } from './store';
 import type { DiagnoseRequest, DiagnosisResult } from './types';
 
 export class BadRequestError extends Error {}
@@ -60,21 +63,46 @@ export function normalizeRequest(req: DiagnoseRequest): Required<DiagnoseRequest
 
 async function tag(books: BookMeta[]): Promise<BookTagging[]> {
   const ids = books.map((b) => b.volumeId);
-  const input = books.map((b) => ({ id: b.volumeId, title: b.title, authors: b.authors, categories: b.categories, description: b.description }));
-  if (isMock()) return validateTagging(mockTagging(input), ids);
-  // タグが欠けた本があれば1回だけやり直す
-  try {
-    return validateTagging(await chatJson(TAGGING_SYSTEM, taggingUserPrompt(input), { temperature: 0.4 }), ids);
-  } catch (e) {
-    console.warn(`[analyze] tagging retry: ${(e as Error).message}`);
-    return validateTagging(await chatJson(TAGGING_SYSTEM, taggingUserPrompt(input), { temperature: 0.2 }), ids);
+  // 一度タグを付けた本は保存したものを使い回し、まだの本だけAIに頼む
+  const cached = await loadTags(ids);
+  const todo = books.filter((b) => !cached.has(b.volumeId));
+  if (todo.length > 0) {
+    const fresh = await tagWithAi(todo);
+    await saveTags([...fresh.values()]);
+    for (const [id, t] of fresh) cached.set(id, t);
   }
+  return ids.map((id) => cached.get(id)!);
+}
+
+async function tagWithAi(books: BookMeta[]): Promise<Map<string, BookTagging>> {
+  const toInput = (bs: BookMeta[]) =>
+    bs.map((b) => ({ id: b.volumeId, title: b.title, authors: b.authors, categories: b.categories, description: b.description }));
+  const ask = async (bs: BookMeta[], temperature: number) =>
+    isMock()
+      ? mockTagging(toInput(bs))
+      : chatJson(TAGGING_SYSTEM, taggingUserPrompt(toInput(bs)), { temperature, maxTokens: taggingMaxTokens(bs.length), label: `タグ付け${bs.length}冊` });
+
+  const ids = books.map((b) => b.volumeId);
+  let got = new Map<string, BookTagging>();
+  try {
+    got = parseTaggingPartial(await ask(books, 0.4), ids);
+  } catch (e) {
+    console.warn(`[analyze] tagging failed: ${(e as Error).message}`);
+  }
+  // タグが欠けた本があれば、その本だけ1回やり直す
+  const missing = books.filter((b) => !got.has(b.volumeId));
+  if (missing.length > 0) {
+    console.warn(`[analyze] tagging retry for ${missing.length} book(s)`);
+    const retry = validateTagging(await ask(missing, 0.2), missing.map((b) => b.volumeId));
+    for (const t of retry) got.set(t.id, t);
+  }
+  return got;
 }
 
 async function write(ctx: AnalysisContext): Promise<{ text: AnalysisText; fallback: boolean }> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = isMock() ? mockAnalysis(ctx) : await chatJson(ANALYSIS_SYSTEM, analysisUserPrompt(ctx), { temperature: 0.8, maxTokens: 6000 });
+      const raw = isMock() ? mockAnalysis(ctx) : await chatJson(ANALYSIS_SYSTEM, analysisUserPrompt(ctx), { temperature: 0.8, maxTokens: analysisMaxTokens(ctx.books.length), label: '分析' });
       return { text: validateAnalysis(raw, ctx), fallback: false };
     } catch (e) {
       console.warn(`[analyze] analysis attempt ${attempt + 1} rejected: ${(e as Error).message}`);
