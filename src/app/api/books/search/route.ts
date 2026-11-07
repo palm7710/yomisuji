@@ -5,7 +5,7 @@ export async function GET(req: Request) {
   const q = new URL(req.url).searchParams.get('q') ?? '';
   if (q.trim().length < 1) return NextResponse.json({ books: [] });
   // 巻数の多い漫画でも、検索画面にはシリーズを1件として最大20件だけ返す
-  const books = collapseBookSeries(await searchBooks(q, 40)).slice(0, 20);
+  const books = collapseBookSeries(await searchBooks(q, 40), q).slice(0, 20);
   return NextResponse.json(
     { books },
     { headers: { 'cache-control': 'public, max-age=300, s-maxage=3600' } },
