@@ -61,7 +61,20 @@ export interface ScoringResult {
   hidden?: CoreTag;
   /** メインタグの得点に効いた本（最大3冊）と、その割合（%） */
   evidence: { bookId: string; share: number; liked: boolean }[];
+  /** 好みの集中度（0〜100）。面白さの核の得点のうち、上位2つが占める割合 */
+  focus: number;
+  focusType: FocusType;
+  /** 読み筋が近いタイプ（サブの面白さ）と、刺激をくれそうなタイプ（いちばん得点の低い面白さ） */
+  partner: CoreTag;
+  contrast: CoreTag;
 }
+
+export type FocusType = 'focused' | 'balanced' | 'wide';
+export const FOCUS_LABEL: Record<FocusType, { name: string; text: string }> = {
+  focused: { name: '一点集中型', text: '惹かれる面白さがはっきり決まっていて、そこを深く掘り下げる読み方です。' },
+  balanced: { name: '軸＋寄り道型', text: '軸になる面白さを持ちつつ、ときどき別の面白さにも寄り道する読み方です。' },
+  wide: { name: '雑食型', text: 'いろいろな面白さを広く楽しめる読み方です。' },
+};
 
 export function score(input: ScoringInput): ScoringResult {
   if (input.books.length < MIN_BOOKS) throw new Error(`本は${MIN_BOOKS}冊以上必要です`);
@@ -131,6 +144,11 @@ export function score(input: ScoringInput): ScoringResult {
     .slice(0, 3)
     .map(([bookId, v]) => ({ bookId, share: Math.round((100 * v) / total), liked: likeSet.has(`${bookId}:${main}`) }));
 
+  const coreLift = CORE_TAGS.map((t) => lift[t]);
+  const coreTotal = coreLift.reduce((a, v) => a + v, 0);
+  const focus = coreTotal > 0 ? Math.round((100 * (lift[main] + lift[sub])) / coreTotal) : 0;
+  const focusType: FocusType = focus >= 62 ? 'focused' : focus >= 45 ? 'balanced' : 'wide';
+
   return {
     scores,
     main,
@@ -146,6 +164,10 @@ export function score(input: ScoringInput): ScoringResult {
     crossGenre,
     hidden,
     evidence,
+    focus,
+    focusType,
+    partner: sub,
+    contrast: coreRank[coreRank.length - 1],
   };
 }
 
