@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildFindUrl, findBook, getVolume, normalizeTitle, parseVolume, pickBestMatch, searchBooks, toPublic } from './googleBooks';
+import { buildFindUrl, collapseBookSeries, findBook, getVolume, normalizeTitle, parseVolume, pickBestMatch, searchBooks, splitSeriesTitle, toPublic } from './googleBooks';
 
 // Google Books API の返り値の形を模した見本（中身は試験用）
 const vol = (id: string, title: string, authors: string[], opts: { thumb?: boolean; desc?: string } = {}) => ({
@@ -47,6 +47,26 @@ describe('pickBestMatch', () => {
   });
   it('表記ゆれをならして比べる', () => {
     expect(normalizeTitle('64（ロクヨン）')).toBe(normalizeTitle('64 ロクヨン'));
+  });
+});
+
+describe('漫画シリーズのまとめ表示', () => {
+  it('題名の途中の数字は残し、末尾の巻数だけを分ける', () => {
+    expect(splitSeriesTitle('3月のライオン 17')).toEqual({ title: '3月のライオン', volume: 17 });
+    expect(splitSeriesTitle('ONE PIECE 第100巻')).toEqual({ title: 'ONE PIECE', volume: 100 });
+    expect(splitSeriesTitle('NARUTO Vol. 12')).toEqual({ title: 'NARUTO', volume: 12 });
+    expect(splitSeriesTitle('1984')).toEqual({ title: '1984' });
+  });
+
+  it('同じ著者の巻違いをまとめ、若い巻を代表にする', () => {
+    const books = [vol('v3', 'キングダム 3', ['原泰久']), vol('v1', 'キングダム 1', ['原泰久']), vol('other', 'キングダム 1', ['別の著者'])]
+      .map(parseVolume)
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null)
+      .map(toPublic);
+    const grouped = collapseBookSeries(books);
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0]).toMatchObject({ volumeId: 'v1', seriesTitle: 'キングダム', seriesCount: 2 });
+    expect(grouped[1]).toMatchObject({ volumeId: 'other' });
   });
 });
 
