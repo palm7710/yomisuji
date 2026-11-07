@@ -3,19 +3,13 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ThemeId } from '@/data/books';
-import { CORE_TAGS, TAGS } from '@/data/tags';
+import { LIKE_OPTIONS } from '@/data/likes';
 import { AiNotice, CoverImage, GoogleAttribution } from '@/components/BookCover';
 import type { PublicBookMeta } from '@/lib/googleBooks';
 import { MAX_BOOKS, MAX_DISLIKED, MAX_LIKE_BOOKS, MIN_BOOKS } from '@/lib/scoring';
 
-const STORAGE_KEY = 'yomisuji:draft:v2';
+const STORAGE_KEY = 'yomisuji:draft:v4';
 const PROGRESS = ['本の情報を集めています', 'AIが本ごとの面白さを読み解いています', 'あなたの読み筋を計算しています', 'AIが説明文とおすすめを書いています', 'おすすめの本を Google Books で確かめています'];
-
-export interface ShelfItem {
-  theme: ThemeId;
-  book: PublicBookMeta;
-}
 
 interface Draft {
   selected: PublicBookMeta[];
@@ -26,19 +20,53 @@ interface Draft {
 
 const EMPTY: Draft = { selected: [], favorite: '', likes: [], disliked: [] };
 
-export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string }[]; shelf: ShelfItem[] }) {
-  const router = useRouter();
-  const [step, setStep] = useState<'pick' | 'deepen'>('pick');
-  const [theme, setTheme] = useState<ThemeId>(themes[0].id);
-  const [query, setQuery] = useState('');
+/** Google Books の検索（入力が止まって0.4秒後に検索する） */
+function useBookSearch(query: string) {
   const [results, setResults] = useState<PublicBookMeta[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const seqRef = useRef(0);
+
+  useEffect(() => {
+    const q = query.trim();
+    const seq = ++seqRef.current;
+    if (!q) {
+      setResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/books/search?q=${encodeURIComponent(q)}`);
+        const json = (await res.json()) as { books: PublicBookMeta[] };
+        if (seq === seqRef.current) setResults(json.books);
+      } catch {
+        if (seq === seqRef.current) setResults([]);
+      } finally {
+        if (seq === seqRef.current) setSearching(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  return { results, searching };
+}
+
+export function Picker() {
+  const router = useRouter();
+  const [step, setStep] = useState<'pick' | 'deepen'>('pick');
+  const [query, setQuery] = useState('');
+  const [dislikeQuery, setDislikeQuery] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [showDisliked, setShowDisliked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
-  const searchSeq = useRef(0);
+  const [justAdded, setJustAdded] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const search = useBookSearch(query);
+  const dislikeSearch = useBookSearch(dislikeQuery);
 
   // 選んだ本を端末に一時保存し、戻る操作や再読み込みで消えないようにする
   useEffect(() => {
@@ -57,29 +85,6 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
     }
   }, [draft]);
 
-  // Google Books の検索（入力が止まって0.4秒後）
-  useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setResults(null);
-      return;
-    }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/books/search?q=${encodeURIComponent(q)}`);
-        const json = (await res.json()) as { books: PublicBookMeta[] };
-        if (seq === searchSeq.current) setResults(json.books);
-      } catch {
-        if (seq === searchSeq.current) setResults([]);
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [query]);
-
   // 診断中の表示を少しずつ進める（実際の進み具合とは連動しない目安）
   useEffect(() => {
     if (!busy) return;
@@ -91,31 +96,36 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
   const selectedIds = useMemo(() => new Set(draft.selected.map((b) => b.volumeId)), [draft.selected]);
   const count = draft.selected.length;
   const ready = count >= MIN_BOOKS;
-  const visible = results ?? shelf.filter((s) => s.theme === theme).map((s) => s.book);
+  const full = count >= MAX_BOOKS;
 
-  const toggleBook = (b: PublicBookMeta) =>
-    setDraft((d) => {
-      if (d.selected.some((x) => x.volumeId === b.volumeId)) {
-        return {
-          ...d,
-          selected: d.selected.filter((x) => x.volumeId !== b.volumeId),
-          favorite: d.favorite === b.volumeId ? '' : d.favorite,
-          likes: d.likes.filter((k) => !k.startsWith(`${b.volumeId}:`)),
-        };
-      }
-      if (d.selected.length >= MAX_BOOKS) return d;
-      return { ...d, selected: [...d.selected, b], disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) };
-    });
+  const addBook = (b: PublicBookMeta) => {
+    if (selectedIds.has(b.volumeId) || full) return;
+    setDraft((d) => ({ ...d, selected: [...d.selected, b], disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
+    // 選んだら検索を閉じて、選んだ本の並びに戻る
+    setQuery('');
+    setJustAdded(b.title);
+    inputRef.current?.focus();
+  };
+
+  const removeBook = (b: PublicBookMeta) =>
+    setDraft((d) => ({
+      ...d,
+      selected: d.selected.filter((x) => x.volumeId !== b.volumeId),
+      favorite: d.favorite === b.volumeId ? '' : d.favorite,
+      likes: d.likes.filter((k) => !k.startsWith(`${b.volumeId}:`)),
+    }));
 
   const toggleLike = (key: string) =>
     setDraft((d) => ({ ...d, likes: d.likes.includes(key) ? d.likes.filter((k) => k !== key) : [...d.likes, key] }));
 
-  const toggleDisliked = (b: PublicBookMeta) =>
+  const addDisliked = (b: PublicBookMeta) => {
     setDraft((d) => {
-      if (d.disliked.some((x) => x.volumeId === b.volumeId)) return { ...d, disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) };
-      if (d.disliked.length >= MAX_DISLIKED) return d;
+      if (d.disliked.some((x) => x.volumeId === b.volumeId) || d.disliked.length >= MAX_DISLIKED || selectedIds.has(b.volumeId)) return d;
       return { ...d, disliked: [...d.disliked, b] };
     });
+    setDislikeQuery('');
+  };
+  const removeDisliked = (b: PublicBookMeta) => setDraft((d) => ({ ...d, disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
 
   const submit = async (withDetails: boolean) => {
     setBusy(true);
@@ -140,15 +150,8 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
     }
   };
 
-  const overlay = busy && (
-    <div className="overlay" role="status" aria-live="polite">
-      <span className="spinner" aria-hidden="true" />
-      <p className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{PROGRESS[progress]}</p>
-      <p className="small muted" style={{ margin: 0 }}>20〜40秒ほどかかります。このままお待ちください。</p>
-    </div>
-  );
-
   if (step === 'pick') {
+    const showingResults = query.trim().length > 0;
     return (
       <main className="page">
         <div className="topbar">
@@ -163,67 +166,103 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
 
         <div className="pad" style={{ paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label htmlFor="q" className="small muted">書名・著者で探す（Google Books から検索）</label>
-          <input id="q" className="input" type="search" placeholder="例：三体、東野圭吾" value={query} onChange={(e) => setQuery(e.target.value)} autoComplete="off" />
+          <div style={{ position: 'relative' }}>
+            <input
+              ref={inputRef}
+              id="q"
+              className="input"
+              type="search"
+              placeholder="例：ワンピース、東野圭吾、エッセイ"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setJustAdded('');
+              }}
+              autoComplete="off"
+              disabled={full}
+            />
+          </div>
+          <p className="small muted" style={{ margin: 0, minHeight: 18 }} aria-live="polite">
+            {full
+              ? `${MAX_BOOKS}冊選びました。入れ替えるときは、下の本を外してください`
+              : showingResults
+                ? search.searching
+                  ? '検索しています…'
+                  : search.results
+                    ? `${search.results.length}件見つかりました。タップで追加します`
+                    : ''
+                : justAdded
+                  ? `『${justAdded}』を追加しました。続けて探せます`
+                  : ''}
+          </p>
         </div>
 
-        {!query && (
-          <div className="hscroll pad" style={{ paddingTop: 14 }} aria-label="テーマの棚">
-            {themes.map((t) => (
-              <button key={t.id} className="chip" aria-pressed={t.id === theme} onClick={() => setTheme(t.id)}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="pad" style={{ paddingTop: 16, paddingBottom: 20, flexGrow: 1 }}>
-          {query && (
-            <p className="small muted" style={{ margin: '0 0 12px' }} aria-live="polite">
-              {searching ? '検索しています…' : results ? `${results.length}件見つかりました` : ''}
-            </p>
-          )}
-          {visible.length === 0 && !searching ? (
-            <p className="muted" style={{ fontSize: 14 }}>
-              {query ? '見つかりませんでした。書名の一部や著者名でも探せます。' : 'この棚の本を読み込めませんでした。上の検索から探してください。'}
-            </p>
+        <div className="pad" style={{ paddingTop: 8, paddingBottom: 20, flexGrow: 1 }}>
+          {showingResults ? (
+            search.results && search.results.length === 0 && !search.searching ? (
+              <p className="muted" style={{ fontSize: 14 }}>見つかりませんでした。書名の一部や著者名でも探せます。</p>
+            ) : (
+              <ul className="result-list" aria-label="検索結果">
+                {(search.results ?? []).map((b) => {
+                  const on = selectedIds.has(b.volumeId);
+                  return (
+                    <li key={b.volumeId}>
+                      <button className="result-row" onClick={() => (on ? removeBook(b) : addBook(b))} aria-pressed={on}>
+                        <span style={{ width: 44, flexShrink: 0 }}>
+                          <CoverImage book={b} />
+                        </span>
+                        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
+                          <span className="book-title" style={{ fontSize: 14 }}>{b.title}</span>
+                          <span className="book-author">
+                            {b.authors.join('、')}
+                            {b.publishedDate ? `・${b.publishedDate.slice(0, 4)}` : ''}
+                          </span>
+                        </span>
+                        <span className={on ? 'row-action on' : 'row-action'} aria-hidden="true">
+                          {on ? <CheckIcon /> : <PlusIcon />}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          ) : count === 0 ? (
+            <div className="empty-state">
+              <SearchIcon />
+              <p className="serif" style={{ margin: 0, fontWeight: 700, fontSize: 17 }}>読んだことのある本を探してください</p>
+              <p className="small muted" style={{ margin: 0, lineHeight: 1.7 }}>
+                小説、マンガ、エッセイ、ビジネス書など、どんな本でも選べます。
+                <br />
+                好きだった本を{MIN_BOOKS}〜{MAX_BOOKS}冊選ぶと診断できます。
+              </p>
+            </div>
           ) : (
-            <div className="book-grid">
-              {visible.map((b) => {
-                const on = selectedIds.has(b.volumeId);
-                return (
-                  <button key={b.volumeId} className="book-tile" aria-pressed={on} onClick={() => toggleBook(b)}>
+            <section aria-labelledby="sel-h">
+              <h2 id="sel-h" className="label" style={{ marginBottom: 12 }}>選んだ本（タップで外す）</h2>
+              <div className="book-grid">
+                {draft.selected.map((b) => (
+                  <button key={b.volumeId} className="book-tile" onClick={() => removeBook(b)} aria-label={`『${b.title}』を外す`}>
                     <CoverImage book={b} />
-                    {on && (
-                      <span className="check" aria-hidden="true">
-                        <CheckIcon />
-                      </span>
-                    )}
+                    <span className="check remove" aria-hidden="true">
+                      <CloseIcon />
+                    </span>
                     <span className="book-title">{b.title}</span>
                     <span className="book-author">{b.authors.join('、')}</span>
                   </button>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            </section>
           )}
           <GoogleAttribution />
         </div>
 
         <div className="sticky-foot">
-          {count > 0 && (
-            <div className="selected-strip" aria-label="選んだ本（タップで外す）">
-              {draft.selected.map((b) => (
-                <button key={b.volumeId} className="selected-pill" onClick={() => toggleBook(b)} aria-label={`『${b.title}』を外す`}>
-                  <span>{b.title}</span>
-                  <CloseIcon />
-                </button>
-              ))}
-            </div>
-          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <span style={{ fontSize: 14 }} aria-live="polite">
               選んだ本 <b className="serif" style={{ fontSize: 22 }}>{count}</b> 冊
             </span>
-            <span className="small muted">{count >= MAX_BOOKS ? `${MAX_BOOKS}冊まで選べます` : `${MIN_BOOKS}〜${MAX_BOOKS}冊`}</span>
+            <span className="small muted">{MIN_BOOKS}〜{MAX_BOOKS}冊</span>
           </div>
           <button className="btn btn-primary" disabled={!ready} onClick={() => setStep('deepen')}>
             {ready ? '次へ' : `あと${MIN_BOOKS - count}冊選んでください`}
@@ -236,11 +275,16 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
   // ステップ2：もっと詳しく（任意）
   const likeBooks = draft.selected.slice(0, MAX_LIKE_BOOKS);
   const clues = count + (draft.favorite ? 2 : 0) + draft.likes.length * 2 + draft.disliked.length;
-  const dislikeCandidates = shelf.map((s) => s.book).filter((b) => !selectedIds.has(b.volumeId));
 
   return (
     <main className="page">
-      {overlay}
+      {busy && (
+        <div className="overlay" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" />
+          <p className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{PROGRESS[progress]}</p>
+          <p className="small muted" style={{ margin: 0 }}>20〜40秒ほどかかります。このままお待ちください。</p>
+        </div>
+      )}
       <div className="topbar">
         <button className="iconbtn" aria-label="本選びに戻る" onClick={() => setStep('pick')}>
           <BackIcon />
@@ -271,14 +315,14 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
         {likeBooks.map((b) => (
           <section key={b.volumeId} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <h2 style={{ margin: 0, fontSize: 13, fontWeight: 500 }} className="muted">
-              <span className="serif" style={{ fontWeight: 800, fontSize: 16, color: 'var(--ink)' }}>{b.title}</span>　のどこが好き？
+              <span className="serif" style={{ fontWeight: 800, fontSize: 16, color: 'var(--ink)' }}>{b.title}</span>　のどこが好き？<span style={{ fontSize: 12 }}>（いくつでも）</span>
             </h2>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {CORE_TAGS.map((t) => {
-                const key = `${b.volumeId}:${t}`;
+              {LIKE_OPTIONS.map((o) => {
+                const key = `${b.volumeId}:${o.id}`;
                 return (
-                  <button key={key} className="chip accent" style={{ borderRadius: 6 }} aria-pressed={draft.likes.includes(key)} onClick={() => toggleLike(key)}>
-                    {TAGS[t].label}
+                  <button key={key} className="chip accent like-chip" aria-pressed={draft.likes.includes(key)} onClick={() => toggleLike(key)}>
+                    {o.label}
                   </button>
                 );
               })}
@@ -296,12 +340,46 @@ export function Picker({ themes, shelf }: { themes: { id: ThemeId; label: string
             合わなかった本も伝える（任意・{MAX_DISLIKED}冊まで）
           </button>
           {showDisliked && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {dislikeCandidates.map((b) => (
-                <button key={b.volumeId} className="chip" aria-pressed={draft.disliked.some((x) => x.volumeId === b.volumeId)} onClick={() => toggleDisliked(b)}>
-                  {b.title}
-                </button>
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {draft.disliked.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {draft.disliked.map((b) => (
+                    <button key={b.volumeId} className="chip" aria-pressed="true" onClick={() => removeDisliked(b)} aria-label={`『${b.title}』を外す`}>
+                      {b.title} ×
+                    </button>
+                  ))}
+                </div>
+              )}
+              {draft.disliked.length < MAX_DISLIKED && (
+                <>
+                  <label htmlFor="dq" className="visually-hidden">合わなかった本を探す</label>
+                  <input id="dq" className="input" type="search" placeholder="合わなかった本を探す" value={dislikeQuery} onChange={(e) => setDislikeQuery(e.target.value)} autoComplete="off" />
+                  {dislikeQuery.trim() && (
+                    <ul className="result-list" aria-label="合わなかった本の検索結果">
+                      {dislikeSearch.searching && <li className="small muted">検索しています…</li>}
+                      {(dislikeSearch.results ?? [])
+                        .filter((b) => !selectedIds.has(b.volumeId))
+                        .slice(0, 6)
+                        .map((b) => (
+                          <li key={b.volumeId}>
+                            <button className="result-row" onClick={() => addDisliked(b)}>
+                              <span style={{ width: 32, flexShrink: 0 }}>
+                                <CoverImage book={b} />
+                              </span>
+                              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
+                                <span className="book-title">{b.title}</span>
+                                <span className="book-author">{b.authors.join('、')}</span>
+                              </span>
+                              <span className="row-action" aria-hidden="true">
+                                <PlusIcon />
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </>
+              )}
             </div>
           )}
         </section>
@@ -343,10 +421,27 @@ function CheckIcon() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
 function CloseIcon() {
   return (
-    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
       <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--rule-strong)" strokeWidth="1.6" strokeLinecap="round">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5" />
     </svg>
   );
 }
