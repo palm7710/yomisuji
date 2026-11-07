@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BadRequestError, expandLikes, normalizeRequest, runDiagnosis } from './analyze';
 import { loadResult } from './store';
@@ -48,14 +51,17 @@ const analysis = {
   ],
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   process.env.DEEPSEEK_API_KEY = 'test-key';
+  // テストごとに空の保存先を使う（タグの使い回しがテストどうしで混ざらないように）
+  process.env.DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'yomisuji-'));
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   delete process.env.DEEPSEEK_API_KEY;
+  delete process.env.DATA_DIR;
 });
 
 describe('expandLikes', () => {
@@ -92,7 +98,13 @@ describe('runDiagnosis', () => {
 
     const ds = sent.filter((s) => s.url.includes('deepseek'));
     expect(ds).toHaveLength(2);
-    expect(ds[0].body).toMatchObject({ model: 'deepseek-flash', response_format: { type: 'json_object' } });
+    expect(ds[0].body).toMatchObject({ model: 'deepseek-flash', response_format: { type: 'json_object' }, thinking: { type: 'disabled' } });
+    // 出力の上限は本の数に合わせて締めてある
+    expect(ds[0].body?.max_tokens).toBe(150 + 120 * IDS.length);
+    expect(ds[1].body?.max_tokens).toBe(2000 + 60 * IDS.length);
+    // 送るJSONは改行・字下げなしで詰めてある
+    const userMsg = (ds[0].body?.messages as { content: string }[])[1].content;
+    expect(userMsg).not.toMatch(/\{\n /);
 
     expect(await loadResult(r.id)).toEqual(r);
   });
@@ -104,5 +116,38 @@ describe('runDiagnosis', () => {
     expect(r.fallbackText).toBe(true);
     expect(r.text.summary).toContain('ジャンルは');
     expect(r.recommendations).toEqual([]);
+  });
+
+  it('一度タグを付けた本は保存したものを使い、AIはタグの付いていない本だけに頼む', async () => {
+    stubFetch([tagging, analysis]);
+    await runDiagnosis({ books: IDS });
+
+    // 2回目：同じ5冊 → タグ付けは呼ばず、分析の1回だけ
+    let sent = stubFetch([analysis]);
+    await runDiagnosis({ books: IDS });
+    expect(sent.filter((s) => s.url.includes('deepseek'))).toHaveLength(1);
+
+    // 3回目：1冊だけ新しい本 → タグ付けはその1冊分だけ
+    TITLES.vol00006 = '新しい本';
+    const one = { books: [{ id: 'vol00006', genre: 'エッセイ', weights: { lies: 2, warm: 2, inner: 2 }, note: 'メモ' }] };
+    sent = stubFetch([one, analysis]);
+    await runDiagnosis({ books: [...IDS.slice(1), 'vol00006'] });
+    const ds = sent.filter((s) => s.url.includes('deepseek'));
+    expect(ds).toHaveLength(2);
+    const asked = (ds[0].body?.messages as { content: string }[])[1].content;
+    expect(asked).toContain('vol00006');
+    expect(asked).not.toContain('vol00002');
+  });
+
+  it('タグが欠けた本があれば、その本だけやり直す', async () => {
+    const partial = { books: tagging.books.slice(0, 3) };
+    const rest = { books: tagging.books.slice(3) };
+    const sent = stubFetch([partial, rest, analysis]);
+    await runDiagnosis({ books: IDS });
+    const ds = sent.filter((s) => s.url.includes('deepseek'));
+    expect(ds).toHaveLength(3);
+    const retryMsg = (ds[1].body?.messages as { content: string }[])[1].content;
+    expect(retryMsg).toContain('vol00004');
+    expect(retryMsg).not.toContain('vol00001');
   });
 });
