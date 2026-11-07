@@ -79,8 +79,19 @@ describe('シリーズのまとめ表示と人気順', () => {
       .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
     const grouped = collapseBookSeries(books);
     expect(grouped).toHaveLength(2);
-    expect(grouped[0]).toMatchObject({ volumeId: 'v1', seriesTitle: 'キングダム', seriesCount: 2 });
+    expect(grouped[0]).toMatchObject({ volumeId: 'v1', seriesTitle: 'キングダム', seriesCount: 2, seriesRepresentativeVolume: 1 });
     expect(grouped[1]).toMatchObject({ volumeId: 'other' });
+  });
+
+  it('巻数不明の版より1巻を代表にする', () => {
+    const books = [
+      vol('unknown', 'キングダム', ['原泰久']),
+      vol('v2', 'キングダム 2', ['原泰久']),
+      vol('v1', 'キングダム 1', ['原泰久']),
+    ]
+      .map(parseVolume)
+      .filter((book): book is NonNullable<ReturnType<typeof parseVolume>> => book !== null);
+    expect(collapseBookSeries(books)[0]).toMatchObject({ volumeId: 'v1', seriesRepresentativeVolume: 1 });
   });
 
   it('Google BooksのシリーズIDが同じなら題名の異なる小説もまとめる', () => {
