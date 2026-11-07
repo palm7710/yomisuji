@@ -13,6 +13,7 @@ export default defineConfig({
     },
     env: {
       ASSETS: bindings.assets(),
+          YOMISUJI_DATA: bindings.kv({ id: "5cd6d98104094553959c338fd9164fa6" }),
           SITE_URL: bindings.text("https://yomisuji.241it002i.workers.dev"),
     },
   }),
