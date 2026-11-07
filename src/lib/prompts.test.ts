@@ -35,7 +35,7 @@ const books = [
 ];
 const ctx: AnalysisContext = {
   scoring: score({ books, disliked: [], likes: [] }),
-  books: books.map((x) => ({ id: x.id, title: x.title, author: '著者', genre: x.genre, note: 'メモ', likedTags: [], favorite: false })),
+  books: books.map((x) => ({ id: x.id, title: x.title, author: '著者', genre: x.genre, note: 'メモ', likedTags: [], likedLabels: [], favorite: false })),
 };
 const good = {
   summary: 'ジャンルはミステリー。でも惹かれているのは、人が隠しているものかもしれません。',
@@ -71,5 +71,30 @@ describe('validateAnalysis', () => {
     const f = fallbackText(ctx);
     expect(f.summary).toContain('ミステリー');
     expect(() => validateAnalysis({ ...f, hidden: f.hidden ?? null, evidence: [], recommendations: [] }, ctx)).not.toThrow();
+  });
+  it('詳しい分析は項目ごとに検査し、だめな項目だけ捨てる', () => {
+    const r = validateAnalysis(
+      {
+        ...good,
+        catchphrase: '人の奥をのぞく人',
+        patterns: [{ title: '人物から入る', body: '気持ちの動きから本に入っていきそうです。' }, { title: '', body: '空の名前は捨てる' }],
+        connections: [{ book_ids: ['a', 'b'], text: 'どちらも語られない心を描いています。' }, { book_ids: ['a', 'zzz'], text: '知らない本' }],
+        per_book: [{ book_id: 'a', point: '語り手ごとの視点に惹かれていそうです。' }, { book_id: 'a', point: '重複' }, { book_id: 'b', point: '『ハリー・ポッター』と同じ' }],
+        mismatch: 'あなたの性格では無理です。',
+        how_to_choose: '紹介文に「真相」とある本を探すとよさそうです。',
+      },
+      ctx,
+    );
+    expect(r.catchphrase).toBe('人の奥をのぞく人');
+    expect(r.patterns).toHaveLength(1);
+    expect(r.connections).toEqual([{ bookIds: ['a', 'b'], text: 'どちらも語られない心を描いています。' }]);
+    expect(r.perBook).toEqual([{ bookId: 'a', point: '語り手ごとの視点に惹かれていそうです。' }]);
+    expect(r.mismatch).toBeUndefined();
+    expect(r.howToChoose).toContain('真相');
+  });
+  it('詳しい分析がなくても、基本の項目がそろっていれば通る', () => {
+    const r = validateAnalysis(good, ctx);
+    expect(r.patterns).toEqual([]);
+    expect(r.catchphrase).toBeUndefined();
   });
 });
