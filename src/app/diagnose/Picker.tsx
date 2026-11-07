@@ -4,11 +4,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CoverImage, GoogleAttribution } from '@/components/BookCover';
+import { ReadingCat } from '@/components/ReadingCat';
 import type { SearchBookMeta } from '@/lib/googleBooks';
 import { MAX_BOOKS, MIN_BOOKS } from '@/lib/scoring';
 
 const STORAGE_KEY = 'yomisuji:draft:v5';
-const PROGRESS = ['本の情報を集めています', 'AIが本ごとの面白さを読み解いています', 'あなたの読み筋を計算しています', 'AIが説明文とおすすめを書いています', 'おすすめの本を Google Books で確かめています'];
 
 interface Draft {
   selected: SearchBookMeta[];
@@ -54,7 +54,6 @@ export function Picker() {
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [justAdded, setJustAdded] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -80,14 +79,6 @@ export function Picker() {
       /* noop */
     }
   }, [draft]);
-
-  // 診断中の表示を少しずつ進める（実際の進み具合とは連動しない目安）
-  useEffect(() => {
-    if (!busy) return;
-    setProgress(0);
-    const t = setInterval(() => setProgress((p) => Math.min(PROGRESS.length - 1, p + 1)), 4500);
-    return () => clearInterval(t);
-  }, [busy]);
 
   const selectedIds = useMemo(() => new Set(draft.selected.map((b) => b.volumeId)), [draft.selected]);
   const count = draft.selected.length;
@@ -132,13 +123,7 @@ export function Picker() {
   const showingResults = query.trim().length > 0;
   return (
       <main className="page">
-        {busy && (
-          <div className="overlay" role="status" aria-live="polite">
-            <span className="spinner" aria-hidden="true" />
-            <p className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{PROGRESS[progress]}</p>
-            <p className="small muted" style={{ margin: 0 }}>20〜40秒ほどかかります。このままお待ちください。</p>
-          </div>
-        )}
+        {busy && <ReadingCat />}
         <div className="topbar">
           <Link href="/" className="iconbtn" aria-label="トップに戻る">
             <BackIcon />
