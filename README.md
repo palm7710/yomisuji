@@ -2,7 +2,7 @@
 
 好きな本を選ぶと、ジャンルではなく「物語のどんな構造に惹かれているか」をAIが言葉にする読書タイプ診断です。
 
-- **本：** Google Books から検索して、どんな本でも選べます。テーマの棚は選び始めのきっかけです。
+- **本：** 最初は何も並ばず、Google Books で検索して選んだ本が並んでいきます。どんな本でも選べます。
 - **タグ・分析・説明文・おすすめ：** DeepSeek が担当します。得点とタイプの計算だけはプログラムで行います（`src/lib/scoring.ts`）。
 - **結果は毎回変わります：** AIが付けるので、同じ本を選んでも診断するたびに結果が変わることがあります。画面にもそう明記しています。シェアされたURLでは、保存した結果をそのまま表示します。
 
@@ -56,7 +56,6 @@ GOOGLE_BOOKS_API_BASE=http://localhost:4010/books/v1/volumes DEEPSEEK_MOCK=1 npm
 ```
 src/
   data/tags.ts             物語構造タグ（3層18種）、ジャンル、タイプ名、修飾語
-  data/books.ts            テーマの棚に並べる本（書名と著者だけ）
   lib/googleBooks.ts       Google Books：検索・1冊の取得・書名と著者での特定
   lib/deepseek.ts          DeepSeek API の呼び出し（JSONモード、1回やり直し、模擬モード）
   lib/prompts.ts           AIへの指示文と返り値の検査、定型文
