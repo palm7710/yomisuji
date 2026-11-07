@@ -8,7 +8,7 @@ export interface DiagnoseRequest {
   /** 選んだ本の Google Books volumeId（5〜15冊） */
   books: string[];
   favorite?: string;
-  /** `<volumeId>:<面白さの核のタグ>` */
+  /** 「どこが好き？」で選んだもの。`<volumeId>:<選択肢ID>`（src/data/likes.ts） */
   likes?: string[];
   /** 合わなかった本の volumeId（3冊まで） */
   disliked?: string[];
