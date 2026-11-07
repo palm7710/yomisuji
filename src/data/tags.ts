@@ -31,39 +31,41 @@ export interface TagInfo {
   essence: string;
 }
 
+// 名前と言い回しは、小説・マンガ・エッセイ・ビジネス書・実用書のどれを読む人にも通じる、ふだんの言葉にしている。
+// 「物語」「伏線」「群像劇」のような小説寄りの言葉は使わない。
 export const TAGS: Record<TagId, TagInfo> = {
-  mechanism: { id: 'mechanism', layer: 'core', label: '仕組みを解く', essence: '“世界の仕組みが見える瞬間”' },
-  gamesmanship: { id: 'gamesmanship', layer: 'core', label: '駆け引き', essence: '“相手の手を読み合う緊張”' },
-  reversal: { id: 'reversal', layer: 'core', label: '反転', essence: '“最後に意味がひっくり返る構成”' },
-  lies: { id: 'lies', layer: 'core', label: '嘘と弱さ', essence: '“人が隠しているもの”' },
-  outsider: { id: 'outsider', layer: 'core', label: 'はみ出し者', essence: '“社会の外側から見た景色”' },
-  organization: { id: 'organization', layer: 'core', label: '組織の裏側', essence: '“組織や制度の内側で働く力”' },
-  loss: { id: 'loss', layer: 'core', label: '喪失と再生', essence: '“失ったあとの人の歩み”' },
-  immersion: { id: 'immersion', layer: 'core', label: '未知への没入', essence: '“見たことのない世界に入り込む感覚”' },
+  mechanism: { id: 'mechanism', layer: 'core', label: '仕組みを知る', essence: '“仕組みがわかって、世界の見え方が変わる瞬間”' },
+  gamesmanship: { id: 'gamesmanship', layer: 'core', label: '駆け引き', essence: '“相手の一手を読み合う緊張”' },
+  reversal: { id: 'reversal', layer: 'core', label: '意外な展開', essence: '“最後に見え方がひっくり返る驚き”' },
+  lies: { id: 'lies', layer: 'core', label: '人の本音', essence: '“人が隠している本音や弱さ”' },
+  outsider: { id: 'outsider', layer: 'core', label: '輪の外の視点', essence: '“みんなの輪の外から見た景色”' },
+  organization: { id: 'organization', layer: 'core', label: '仕事・組織のリアル', essence: '“仕事や組織の内側で動いている力”' },
+  loss: { id: 'loss', layer: 'core', label: '立ち直る姿', essence: '“失ったあとに、また歩き出す姿”' },
+  immersion: { id: 'immersion', layer: 'core', label: '別世界への没入', essence: '“知らない世界にどっぷり浸る感覚”' },
 
-  exhilarating: { id: 'exhilarating', layer: 'aftertaste', label: '爽快', essence: '視界が開けるような爽快な読後感' },
-  lingering: { id: 'lingering', layer: 'aftertaste', label: '余韻', essence: '読み終えたあとも残る静かな余韻' },
-  bitter: { id: 'bitter', layer: 'aftertaste', label: '苦さ', essence: 'すっきりしない苦い後味' },
-  warm: { id: 'warm', layer: 'aftertaste', label: '温かさ', essence: '人のつながりが残す温かさ' },
-  unsettling: { id: 'unsettling', layer: 'aftertaste', label: 'ざわつき', essence: '心がざわつくような落ち着かなさ' },
+  exhilarating: { id: 'exhilarating', layer: 'aftertaste', label: '爽快感', essence: 'スカッと気持ちが晴れる読後感' },
+  lingering: { id: 'lingering', layer: 'aftertaste', label: '余韻', essence: '読み終えてもしばらく心に残る余韻' },
+  bitter: { id: 'bitter', layer: 'aftertaste', label: 'ほろ苦さ', essence: 'すっきりしない、ほろ苦い後味' },
+  warm: { id: 'warm', layer: 'aftertaste', label: 'あたたかさ', essence: '人のつながりにほっとするあたたかさ' },
+  unsettling: { id: 'unsettling', layer: 'aftertaste', label: 'ざわつき', essence: '心がざわっとする落ち着かなさ' },
 
-  ensemble: { id: 'ensemble', layer: 'style', label: '群像劇', essence: '多くの人物の視点が交わる語り' },
-  inner: { id: 'inner', layer: 'style', label: '一人称の内面', essence: '語り手の内面に深く入り込む語り' },
-  dialogue: { id: 'dialogue', layer: 'style', label: '会話劇', essence: '会話のやりとりで進む語り' },
-  document: { id: 'document', layer: 'style', label: '記録・資料体', essence: '記録や資料を積み重ねる語り' },
-  lecture: { id: 'lecture', layer: 'style', label: '知識の講義', essence: '説明を追ううちに理解が深まる語り' },
+  ensemble: { id: 'ensemble', layer: 'style', label: '大勢の視点', essence: 'たくさんの人の視点が重なっていく書き方' },
+  inner: { id: 'inner', layer: 'style', label: '心の声', essence: '書き手や主人公の心の声に入り込める書き方' },
+  dialogue: { id: 'dialogue', layer: 'style', label: '会話・掛け合い', essence: 'テンポのいい会話や掛け合いで進む書き方' },
+  document: { id: 'document', layer: 'style', label: 'リアルな記録', essence: '取材や記録を積み重ねたリアルな書き方' },
+  lecture: { id: 'lecture', layer: 'style', label: 'わかりやすい解説', essence: '読むほど理解が深まる、わかりやすい解説' },
 };
 
-/** メインタイプ（面白さの核）ごとのタイプ名と一言コピー */
+/** メインタイプ（面白さの核）ごとのタイプ名と一言コピー。どのジャンルの読み手にも当てはまる言い方にする */
 export const TYPE_NAMES: Record<CoreTag, { name: string; copy: string }> = {
-  mechanism: { name: '仕組みを解く人', copy: 'ルールが見えた瞬間、世界がひっくり返る。' },
-  gamesmanship: { name: '駆け引きを楽しむ人', copy: '読み合いの一手に、いちばん心が動く。' },
-  reversal: { name: '反転を待つ人', copy: '最後の一行で、全部ひっくり返されたい。' },
-  lies: { name: '嘘を見抜く人', copy: '人が隠しているものに、目が向いてしまう。' },
-  outsider: { name: 'はみ出し者に寄り添う人', copy: '輪の外にいる人の目で、世界を見たい。' },
-  organization: { name: '組織の裏を読む人', copy: '会議室の外で動く力学が、気になって仕方ない。' },
-  loss: { name: '喪失を見つめる人', copy: '失ったあとに残るものを、確かめたい。' },
-  immersion: { name: '未知に飛び込む人', copy: '見たことのない場所へ、ページごと連れていかれたい。' },
+  mechanism: { name: '仕組みを解き明かす人', copy: '「わかった」の瞬間に、世界の見え方が変わる。' },
+  gamesmanship: { name: '駆け引きに燃える人', copy: '一手先を読み合う緊張が、いちばん楽しい。' },
+  reversal: { name: 'どんでん返しを待つ人', copy: '「そういうことか」と声が出る瞬間を探している。' },
+  lies: { name: '人の本音をのぞく人', copy: '人が隠している本音に、つい目が向いてしまう。' },
+  outsider: { name: '輪の外に寄り添う人', copy: '輪の外にいる人の目で、世界を見てみたい。' },
+  organization: { name: '組織の裏側を読む人', copy: '仕事や組織の「本当の動き方」が気になる。' },
+  loss: { name: '立ち直る姿に惹かれる人', copy: '失ったあとに、もう一度歩き出す姿を見届けたい。' },
+  immersion: { name: '別世界に飛び込む人', copy: '知らない世界へ、ページごと連れていってほしい。' },
 };
 
 /** AIが本に付けるジャンル（この中から選ばせる） */
@@ -90,9 +92,9 @@ export type Genre = (typeof GENRES)[number];
 
 /** 読後感（B層）の1位からつく修飾語 */
 export const AFTERTASTE_MODIFIERS: Record<AftertasteTag, string> = {
-  exhilarating: '爽快に、',
-  lingering: '余韻にひたり、',
-  bitter: '苦さをかみしめ、',
-  warm: '温かさを求め、',
-  unsettling: 'ざわつきを楽しみ、',
+  exhilarating: 'スカッと晴れやかに、',
+  lingering: '余韻にひたりながら、',
+  bitter: 'ほろ苦さも味わいながら、',
+  warm: 'あたたかさを求めて、',
+  unsettling: 'ざわつきも楽しみながら、',
 };
