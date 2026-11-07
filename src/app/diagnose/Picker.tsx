@@ -3,22 +3,18 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LIKE_OPTIONS } from '@/data/likes';
-import { AiNotice, CoverImage, GoogleAttribution } from '@/components/BookCover';
+import { CoverImage, GoogleAttribution } from '@/components/BookCover';
 import type { SearchBookMeta } from '@/lib/googleBooks';
-import { MAX_BOOKS, MAX_DISLIKED, MAX_LIKE_BOOKS, MIN_BOOKS } from '@/lib/scoring';
+import { MAX_BOOKS, MIN_BOOKS } from '@/lib/scoring';
 
-const STORAGE_KEY = 'yomisuji:draft:v4';
+const STORAGE_KEY = 'yomisuji:draft:v5';
 const PROGRESS = ['本の情報を集めています', 'AIが本ごとの面白さを読み解いています', 'あなたの読み筋を計算しています', 'AIが説明文とおすすめを書いています', 'おすすめの本を Google Books で確かめています'];
 
 interface Draft {
   selected: SearchBookMeta[];
-  favorite: string;
-  likes: string[];
-  disliked: SearchBookMeta[];
 }
 
-const EMPTY: Draft = { selected: [], favorite: '', likes: [], disliked: [] };
+const EMPTY: Draft = { selected: [] };
 const displayTitle = (book: SearchBookMeta) => book.seriesTitle ?? book.title;
 
 /** Google Books の検索（入力が止まって0.4秒後に検索する） */
@@ -55,11 +51,8 @@ function useBookSearch(query: string) {
 
 export function Picker() {
   const router = useRouter();
-  const [step, setStep] = useState<'pick' | 'deepen'>('pick');
   const [query, setQuery] = useState('');
-  const [dislikeQuery, setDislikeQuery] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY);
-  const [showDisliked, setShowDisliked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -67,13 +60,15 @@ export function Picker() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const search = useBookSearch(query);
-  const dislikeSearch = useBookSearch(dislikeQuery);
 
   // 選んだ本を端末に一時保存し、戻る操作や再読み込みで消えないようにする
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY);
-      if (saved) setDraft({ ...EMPTY, ...JSON.parse(saved) });
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<Draft>;
+        if (Array.isArray(parsed.selected)) setDraft({ selected: parsed.selected });
+      }
     } catch {
       /* 保存できない環境ではそのまま */
     }
@@ -101,34 +96,17 @@ export function Picker() {
 
   const addBook = (b: SearchBookMeta) => {
     if (selectedIds.has(b.volumeId) || full) return;
-    setDraft((d) => ({ ...d, selected: [...d.selected, b], disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
+    setDraft((d) => ({ selected: [...d.selected, b] }));
     // 選んだら検索を閉じて、選んだ本の並びに戻る
     setQuery('');
     setJustAdded(displayTitle(b));
     inputRef.current?.focus();
   };
 
-  const removeBook = (b: SearchBookMeta) =>
-    setDraft((d) => ({
-      ...d,
-      selected: d.selected.filter((x) => x.volumeId !== b.volumeId),
-      favorite: d.favorite === b.volumeId ? '' : d.favorite,
-      likes: d.likes.filter((k) => !k.startsWith(`${b.volumeId}:`)),
-    }));
+  const removeBook = (b: SearchBookMeta) => setDraft((d) => ({ selected: d.selected.filter((x) => x.volumeId !== b.volumeId) }));
 
-  const toggleLike = (key: string) =>
-    setDraft((d) => ({ ...d, likes: d.likes.includes(key) ? d.likes.filter((k) => k !== key) : [...d.likes, key] }));
-
-  const addDisliked = (b: SearchBookMeta) => {
-    setDraft((d) => {
-      if (d.disliked.some((x) => x.volumeId === b.volumeId) || d.disliked.length >= MAX_DISLIKED || selectedIds.has(b.volumeId)) return d;
-      return { ...d, disliked: [...d.disliked, b] };
-    });
-    setDislikeQuery('');
-  };
-  const removeDisliked = (b: SearchBookMeta) => setDraft((d) => ({ ...d, disliked: d.disliked.filter((x) => x.volumeId !== b.volumeId) }));
-
-  const submit = async (withDetails: boolean) => {
+  const submit = async () => {
+    if (!ready || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -137,13 +115,8 @@ export function Picker() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           books: draft.selected.map((b) => b.volumeId),
-          favorite: withDetails ? draft.favorite || undefined : undefined,
-          likes: withDetails ? draft.likes : [],
-          disliked: withDetails ? draft.disliked.map((b) => b.volumeId) : [],
           seriesTitles: Object.fromEntries(
-            [...draft.selected, ...(withDetails ? draft.disliked : [])]
-              .filter((b) => b.seriesTitle)
-              .map((b) => [b.volumeId, b.seriesTitle!]),
+            draft.selected.filter((b) => b.seriesTitle).map((b) => [b.volumeId, b.seriesTitle!]),
           ),
         }),
       });
@@ -156,16 +129,22 @@ export function Picker() {
     }
   };
 
-  if (step === 'pick') {
-    const showingResults = query.trim().length > 0;
-    return (
+  const showingResults = query.trim().length > 0;
+  return (
       <main className="page">
+        {busy && (
+          <div className="overlay" role="status" aria-live="polite">
+            <span className="spinner" aria-hidden="true" />
+            <p className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{PROGRESS[progress]}</p>
+            <p className="small muted" style={{ margin: 0 }}>20〜40秒ほどかかります。このままお待ちください。</p>
+          </div>
+        )}
         <div className="topbar">
           <Link href="/" className="iconbtn" aria-label="トップに戻る">
             <BackIcon />
           </Link>
           <div>
-            <div className="small muted">ステップ 1 / 2</div>
+            <div className="small muted">読み筋診断</div>
             <h1 className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 21 }}>読んだことのある本を選ぶ</h1>
           </div>
         </div>
@@ -265,152 +244,19 @@ export function Picker() {
         </div>
 
         <div className="sticky-foot">
+          {error && <p className="error-box" role="alert" style={{ margin: 0 }}>{error}</p>}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <span style={{ fontSize: 14 }} aria-live="polite">
               選んだ本 <b className="serif" style={{ fontSize: 22 }}>{count}</b> 冊
             </span>
             <span className="small muted">{MIN_BOOKS}〜{MAX_BOOKS}冊</span>
           </div>
-          <button className="btn btn-primary" disabled={!ready} onClick={() => setStep('deepen')}>
-            {ready ? '次へ' : `あと${MIN_BOOKS - count}冊選んでください`}
+          <button className="btn btn-primary" disabled={!ready || busy} onClick={submit}>
+            {ready ? 'この本で診断する' : `あと${MIN_BOOKS - count}冊選んでください`}
           </button>
         </div>
       </main>
     );
-  }
-
-  // ステップ2：もっと詳しく（任意）
-  const likeBooks = draft.selected.slice(0, MAX_LIKE_BOOKS);
-  const clues = count + (draft.favorite ? 2 : 0) + draft.likes.length * 2 + draft.disliked.length;
-
-  return (
-    <main className="page">
-      {busy && (
-        <div className="overlay" role="status" aria-live="polite">
-          <span className="spinner" aria-hidden="true" />
-          <p className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 19 }}>{PROGRESS[progress]}</p>
-          <p className="small muted" style={{ margin: 0 }}>20〜40秒ほどかかります。このままお待ちください。</p>
-        </div>
-      )}
-      <div className="topbar">
-        <button className="iconbtn" aria-label="本選びに戻る" onClick={() => setStep('pick')}>
-          <BackIcon />
-        </button>
-        <div>
-          <div className="small muted">ステップ 2 / 2・任意</div>
-          <h1 className="serif" style={{ margin: 0, fontWeight: 800, fontSize: 21 }}>もっと詳しく診断する</h1>
-        </div>
-      </div>
-
-      <div className="pad" style={{ paddingTop: 14, paddingBottom: 24, display: 'flex', flexDirection: 'column', gap: 18, flexGrow: 1 }}>
-        <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <h2 style={{ margin: 0, fontSize: 14 }}>いちばん好きな1冊は？</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {draft.selected.map((b) => (
-              <button
-                key={b.volumeId}
-                className="chip red"
-                aria-pressed={draft.favorite === b.volumeId}
-                onClick={() => setDraft((d) => ({ ...d, favorite: d.favorite === b.volumeId ? '' : b.volumeId }))}
-              >
-                {displayTitle(b)}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {likeBooks.map((b) => (
-          <section key={b.volumeId} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <h2 style={{ margin: 0, fontSize: 13, fontWeight: 500 }} className="muted">
-              <span className="serif" style={{ fontWeight: 800, fontSize: 16, color: 'var(--ink)' }}>{displayTitle(b)}</span>　のどこが好き？<span style={{ fontSize: 12 }}>（いくつでも）</span>
-            </h2>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {LIKE_OPTIONS.map((o) => {
-                const key = `${b.volumeId}:${o.id}`;
-                return (
-                  <button key={key} className="chip accent like-chip" aria-pressed={draft.likes.includes(key)} onClick={() => toggleLike(key)}>
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-
-        <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button
-            className="iconbtn"
-            style={{ width: 'auto', justifyContent: 'flex-start', fontSize: 13, fontWeight: 700, color: 'var(--accent)', textDecoration: 'underline' }}
-            aria-expanded={showDisliked}
-            onClick={() => setShowDisliked((v) => !v)}
-          >
-            合わなかった本も伝える（任意・{MAX_DISLIKED}冊まで）
-          </button>
-          {showDisliked && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {draft.disliked.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {draft.disliked.map((b) => (
-                    <button key={b.volumeId} className="chip" aria-pressed="true" onClick={() => removeDisliked(b)} aria-label={`『${displayTitle(b)}』を外す`}>
-                      {displayTitle(b)} ×
-                    </button>
-                  ))}
-                </div>
-              )}
-              {draft.disliked.length < MAX_DISLIKED && (
-                <>
-                  <label htmlFor="dq" className="visually-hidden">合わなかった本を探す</label>
-                  <input id="dq" className="input" type="search" placeholder="合わなかった本を探す" value={dislikeQuery} onChange={(e) => setDislikeQuery(e.target.value)} autoComplete="off" />
-                  {dislikeQuery.trim() && (
-                    <ul className="result-list" aria-label="合わなかった本の検索結果">
-                      {dislikeSearch.searching && <li className="small muted">検索しています…</li>}
-                      {(dislikeSearch.results ?? [])
-                        .filter((b) => !selectedIds.has(b.volumeId))
-                        .slice(0, 6)
-                        .map((b) => (
-                          <li key={b.volumeId}>
-                            <button className="result-row" onClick={() => addDisliked(b)}>
-                              <span style={{ width: 32, flexShrink: 0 }}>
-                                <CoverImage book={b} />
-                              </span>
-                              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
-                                <span className="book-title">{displayTitle(b)}</span>
-                                {(b.seriesCount ?? 0) > 1 && <span className="small muted">同シリーズの{b.seriesCount}件をまとめて表示</span>}
-                                <span className="book-author">{b.authors.join('、')}</span>
-                              </span>
-                              <span className="row-action" aria-hidden="true">
-                                <PlusIcon />
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                    </ul>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </section>
-
-        <AiNotice compact />
-      </div>
-
-      <div className="sticky-foot">
-        {error && <p className="error-box" role="alert" style={{ margin: 0 }}>{error}</p>}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className="small muted" style={{ whiteSpace: 'nowrap' }}>読み取れる手がかり</span>
-          <div className="bar-track" style={{ flexGrow: 1, height: 8 }}>
-            <div className="bar-fill" style={{ width: `${Math.min(100, Math.round((clues / 30) * 100))}%`, background: 'var(--accent)' }} />
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{clues}個</span>
-        </div>
-        <button className="btn btn-primary" onClick={() => submit(true)} disabled={busy}>診断する</button>
-        <button className="iconbtn" style={{ width: '100%', fontSize: 13, color: 'var(--muted)', height: 36 }} onClick={() => submit(false)} disabled={busy}>
-          とばして診断する
-        </button>
-      </div>
-    </main>
-  );
 }
 
 function BackIcon() {
