@@ -86,7 +86,7 @@ export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
 
 export interface AnalysisContext {
   scoring: ScoringResult;
-  books: { id: string; title: string; author: string; genre: Genre; note: string; likedTags: TagId[]; favorite: boolean }[];
+  books: { id: string; title: string; author: string; genre: Genre; note: string; likedTags: TagId[]; likedLabels: string[]; favorite: boolean }[];
 }
 
 export interface AnalysisText {
@@ -140,7 +140,8 @@ ${JSON.stringify(
     genre: b.genre,
     note: b.note,
     favorite: b.favorite,
-    liked: b.likedTags.map((t) => TAGS[t].label),
+    liked: b.likedLabels,
+    liked_tags: b.likedTags.map((t) => TAGS[t].label),
   })),
   null,
   1,
