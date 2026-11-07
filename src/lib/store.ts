@@ -10,6 +10,11 @@ import path from 'node:path';
 import type { BookTagging } from './prompts';
 import type { DiagnosisResult } from './types';
 
+interface KvNamespace {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+}
+
 const RESULT_TTL_SECONDS = 60 * 60 * 24 * 365;
 const TAG_TTL_SECONDS = 60 * 60 * 24 * 180;
 /** タグ付けの指示やタグの種類を変えたら上げる（古いタグを使い回さないため） */
@@ -30,6 +35,17 @@ function upstash(): { url: string; token: string } | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   return url && token ? { url, token } : null;
+}
+
+/** Cloudflare Workers では、書き込み可能なファイルシステムの代わりにKVを使う。 */
+async function cloudflareKv(): Promise<KvNamespace | null> {
+  try {
+    const { env } = await import('cloudflare:workers');
+    return (env as unknown as { YOMISUJI_DATA?: KvNamespace }).YOMISUJI_DATA ?? null;
+  } catch {
+    // Node.jsでのローカル開発・テストでは cloudflare:workers は存在しない
+    return null;
+  }
 }
 
 async function upstashCommand(up: { url: string; token: string }, command: (string | number)[]): Promise<unknown> {
@@ -53,6 +69,11 @@ export async function saveResult(result: DiagnosisResult): Promise<void> {
     await upstashCommand(up, ['SET', `r:${result.id}`, JSON.stringify(result), 'EX', RESULT_TTL_SECONDS]);
     return;
   }
+  const kv = await cloudflareKv();
+  if (kv) {
+    await kv.put(`r:${result.id}`, JSON.stringify(result), { expirationTtl: RESULT_TTL_SECONDS });
+    return;
+  }
   const dir = path.join(dataDir(), 'results');
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, `${result.id}.json`), JSON.stringify(result));
@@ -65,6 +86,15 @@ export async function loadResult(id: string): Promise<DiagnosisResult | null> {
     try {
       const raw = await upstashCommand(up, ['GET', `r:${id}`]);
       return typeof raw === 'string' ? (JSON.parse(raw) as DiagnosisResult) : null;
+    } catch {
+      return null;
+    }
+  }
+  const kv = await cloudflareKv();
+  if (kv) {
+    try {
+      const raw = await kv.get(`r:${id}`);
+      return raw ? (JSON.parse(raw) as DiagnosisResult) : null;
     } catch {
       return null;
     }
@@ -95,6 +125,14 @@ export async function loadTags(volumeIds: string[]): Promise<Map<string, BookTag
       });
       return out;
     }
+    const kv = await cloudflareKv();
+    if (kv) {
+      const raws = await Promise.all(volumeIds.map((id) => kv.get(tagKey(id))));
+      raws.forEach((raw, i) => {
+        if (raw) out.set(volumeIds[i], JSON.parse(raw) as BookTagging);
+      });
+      return out;
+    }
     const dir = path.join(dataDir(), 'tags', TAG_CACHE_VERSION);
     await Promise.all(
       volumeIds.map(async (id) => {
@@ -117,6 +155,11 @@ export async function saveTags(tags: BookTagging[]): Promise<void> {
     const up = upstash();
     if (up) {
       await Promise.all(tags.map((t) => upstashCommand(up, ['SET', tagKey(t.id), JSON.stringify(t), 'EX', TAG_TTL_SECONDS])));
+      return;
+    }
+    const kv = await cloudflareKv();
+    if (kv) {
+      await Promise.all(tags.map((t) => kv.put(tagKey(t.id), JSON.stringify(t), { expirationTtl: TAG_TTL_SECONDS })));
       return;
     }
     const dir = path.join(dataDir(), 'tags', TAG_CACHE_VERSION);
