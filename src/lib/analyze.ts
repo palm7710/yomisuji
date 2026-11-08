@@ -7,6 +7,7 @@
 // 6. 結果を保存し、IDを返す
 
 import 'server-only';
+import { SHELF_INFO, SHELVES, type Shelf } from '@/data/shelves';
 import type { TagId } from '@/data/tags';
 import { LIKE_BY_ID } from '@/data/likes';
 import { aiModelName, chatJson, isMock } from './deepseek';
@@ -118,24 +119,25 @@ async function write(ctx: AnalysisContext): Promise<{ text: AnalysisText; fallba
   return { text: fallbackText(ctx), fallback: true };
 }
 
-/** AIが挙げたおすすめを Google Books で確かめ、実在して選ばれていない本を最大3冊返す */
+/**
+ * AIが挙げたおすすめを Google Books で確かめ、実在して選ばれていない本を棚ごとに決まった冊数だけ返す。
+ * 足りない棚は、ほかの棚の本で埋めずに少ないまま出す（棚の意味が崩れるため）
+ */
 async function verifyRecommendations(recs: AnalysisText['recommendations'], selectedIds: string[]) {
-  const found = await Promise.all(recs.slice(0, 8).map((r) => findBook({ title: r.title, author: r.author })));
-  const out: DiagnosisResult['recommendations'] = [];
+  const candidates = recs.slice(0, 12);
+  const found = await Promise.all(candidates.map((r) => findBook({ title: r.title, author: r.author })));
   const used = new Set(selectedIds);
-  recs.slice(0, 8).forEach((r, i) => {
+  const count: Record<Shelf, number> = { center: 0, detour: 0, stretch: 0, surprise: 0 };
+  const kept: DiagnosisResult['recommendations'] = [];
+  candidates.forEach((r, i) => {
     const m = found[i];
-    if (!m || used.has(m.volumeId) || out.length >= 3) return;
+    if (!m || used.has(m.volumeId) || count[r.shelf] >= SHELF_INFO[r.shelf].show) return;
     used.add(m.volumeId);
-    out.push({ book: toPublic(m), reason: r.reason, tags: r.tags, surprise: r.surprise, feel: r.feel, caution: r.caution });
+    count[r.shelf]++;
+    kept.push({ book: toPublic(m), reason: r.reason, tags: r.tags, shelf: r.shelf, feel: r.feel, caution: r.caution });
   });
-  // 「意外な一冊」は1冊だけに
-  let seen = false;
-  for (const r of out) {
-    if (r.surprise && !seen) seen = true;
-    else r.surprise = false;
-  }
-  return out;
+  // 画面では棚の順（ど真ん中 → 寄り道 → 背伸び → 意外）に並べる
+  return SHELVES.flatMap((shelf) => kept.filter((k) => k.shelf === shelf));
 }
 
 export async function runDiagnosis(raw: DiagnoseRequest): Promise<DiagnosisResult> {
@@ -173,6 +175,8 @@ export async function runDiagnosis(raw: DiagnoseRequest): Promise<DiagnosisResul
       author: m.authors.join('、'),
       genre: tagOf.get(m.volumeId)!.genre,
       note: tagOf.get(m.volumeId)!.note,
+      // 内容紹介があれば短くして渡す（AIが本の具体的な中身に触れて書けるように）
+      about: m.description ? m.description.slice(0, 160) : undefined,
       favorite: m.volumeId === req.favorite,
       likedTags: expandLikes(req.likes)
         .filter((k) => k.startsWith(`${m.volumeId}:`))
