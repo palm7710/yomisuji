@@ -51,6 +51,18 @@ const good = {
 };
 
 describe('validateAnalysis', () => {
+  it('おすすめの読み味・引っかかるかもを受け取り、他人の感想のような文や長すぎる文はその項目だけ捨てる', () => {
+    const recs = [
+      { title: '悪人', author: '吉田修一', reason: '人の弱さを描く一冊です。', feel: '読み終えたあと、静かに胸が重くなる。', caution: '救いの少なさが気になるかも。', tags: ['lies'], surprise: false },
+      { title: '模倣犯', author: '宮部みゆき', reason: '人の事情を追う一冊です。', feel: '多くの読者が涙した名作。', caution: 'あ'.repeat(200), tags: [], surprise: false },
+    ];
+    const r = validateAnalysis({ ...good, recommendations: recs }, ctx);
+    expect(r.recommendations[0]).toMatchObject({ feel: '読み終えたあと、静かに胸が重くなる。', caution: '救いの少なさが気になるかも。' });
+    expect(r.recommendations[1].title).toBe('模倣犯');
+    expect(r.recommendations[1].feel).toBeUndefined();
+    expect(r.recommendations[1].caution).toBeUndefined();
+  });
+
   it('正しい返り値を受け取り、知らない本ID・選んだ本と同じおすすめ・知らないタグを捨てる', () => {
     const r = validateAnalysis(good, ctx);
     expect(r.evidence.map((e) => e.bookId)).toEqual(['a']);
