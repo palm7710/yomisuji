@@ -1,4 +1,5 @@
 import type { Genre, TagId } from '@/data/tags';
+import type { Shelf } from '@/data/shelves';
 import type { PublicBookMeta } from './googleBooks';
 import type { AnalysisText } from './prompts';
 import type { ScoringResult } from './scoring';
@@ -36,5 +37,15 @@ export interface DiagnosisResult {
   disliked: string[];
   scoring: ScoringResult;
   text: Omit<AnalysisText, 'recommendations'>;
-  recommendations: { book: PublicBookMeta; reason: string; tags: TagId[]; surprise: boolean; feel?: string; caution?: string }[];
+  recommendations: {
+    book: PublicBookMeta;
+    reason: string;
+    tags: TagId[];
+    /** どの棚のおすすめか。棚ができる前の結果には無い（surprise を見る） */
+    shelf?: Shelf;
+    /** 棚ができる前の結果の「意外な一冊」の印 */
+    surprise?: boolean;
+    feel?: string;
+    caution?: string;
+  }[];
 }
