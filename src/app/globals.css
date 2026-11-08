@@ -263,3 +263,74 @@ li:first-child > .result-heading {
   cursor: pointer;
   font: inherit;
 }
+
+/* 診断結果：本に求めているもの／あなたへの読み解き */
+.core-need {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.core-need p {
+  margin: 0;
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1.6;
+}
+.letter {
+  margin: 0;
+  font-family: var(--serif, 'Shippori Mincho B1', serif);
+  font-size: 15.5px;
+  line-height: 2;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+/* 次に読むなら：棚 */
+.shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shelf + .shelf {
+  margin-top: 10px;
+}
+.shelf-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--ink);
+}
+.shelf-head h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+/* 利用状況ページの表 */
+.stats-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stats-table th,
+.stats-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(30, 28, 25, 0.12);
+  text-align: right;
+}
+.stats-table th:first-child,
+.stats-table td:first-child {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--paper);
+}
+.stats-table thead th {
+  font-weight: 700;
+  color: var(--ink-2);
+}
