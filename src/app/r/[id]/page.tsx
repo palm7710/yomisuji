@@ -6,6 +6,7 @@ import { AFTERTASTE_TAGS, CORE_TAGS, STYLE_TAGS, TAGS, TYPE_NAMES, type TagId } 
 import { LIKE_BY_ID } from '@/data/likes';
 import { FOCUS_LABEL } from '@/lib/scoring';
 import { loadResult } from '@/lib/store';
+import { bookLinks } from '@/lib/bookLinks';
 import { AiNotice, GoogleAttribution, LinkedCover } from '@/components/BookCover';
 import { ShareButtons } from '@/components/ShareButtons';
 
@@ -301,29 +302,77 @@ export default async function ResultPage({ params }: { params: Params }) {
           </Section>
         )}
 
-        {/* 10. おすすめ */}
+        {/* 10. おすすめ（AIの見立て＋次の一歩） */}
         {r.recommendations.length > 0 && (
           <Section title="次に読むなら">
-            {r.recommendations.map((rec) => (
-              <div key={rec.book.volumeId} className="card" style={{ display: 'grid', gridTemplateColumns: '64px minmax(0, 1fr)', gap: 14 }}>
-                <LinkedCover book={rec.book} />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                    <span className="serif" style={{ fontWeight: 800, fontSize: 16 }}>『{rec.book.title}』</span>
-                    {rec.surprise && (
-                      <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: 'var(--card)', background: 'var(--vermilion)', padding: '3px 8px', borderRadius: 3 }}>意外な一冊</span>
-                    )}
+            <span className="small muted" style={{ lineHeight: 1.7 }}>
+              「読み味」と「引っかかるかも」は、AIによる見立てです。実際に読んだ人の感想は、各サイトのリンクからどうぞ。
+            </span>
+            {r.recommendations.map((rec) => {
+              const links = bookLinks(rec.book);
+              const library = links.find((l) => l.key === 'library')!;
+              const reviews = links.filter((l) => l.key !== 'library');
+              const others = r.books.filter((b) => b.volumeId !== rec.book.volumeId).length;
+              return (
+                <div key={rec.book.volumeId} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '64px minmax(0, 1fr)', gap: 14 }}>
+                    <LinkedCover book={rec.book} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                        <span className="serif" style={{ fontWeight: 800, fontSize: 16 }}>『{rec.book.title}』</span>
+                        {rec.surprise && (
+                          <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: 'var(--card)', background: 'var(--vermilion)', padding: '3px 8px', borderRadius: 3 }}>意外な一冊</span>
+                        )}
+                      </div>
+                      <span className="small muted">
+                        {rec.book.authors.join('、')}
+                        {rec.book.publisher ? `・${rec.book.publisher}` : ''}
+                      </span>
+                      <span style={{ fontSize: 13.5, lineHeight: 1.7 }}>{rec.reason}</span>
+                      {rec.tags.length > 0 && <span className="small muted">重なる面白さ：{rec.tags.map((x) => TAGS[x].label).join('・')}</span>}
+                    </div>
                   </div>
-                  <span className="small muted">
-                    {rec.book.authors.join('、')}
-                    {rec.book.publisher ? `・${rec.book.publisher}` : ''}
-                  </span>
-                  <span style={{ fontSize: 13.5, lineHeight: 1.7 }}>{rec.reason}</span>
-                  {rec.tags.length > 0 && <span className="small muted">重なる面白さ：{rec.tags.map((x) => TAGS[x].label).join('・')}</span>}
-                  <a href={rec.book.infoLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13 }}>Google Books で見る</a>
+
+                  {(rec.feel || rec.caution) && (
+                    <div className="rec-ai">
+                      <span className="rec-ai-label">AIの見立て</span>
+                      {rec.feel && (
+                        <div className="rec-ai-row">
+                          <span className="rec-ai-key">読み味</span>
+                          <span>{rec.feel}</span>
+                        </div>
+                      )}
+                      {rec.caution && (
+                        <div className="rec-ai-row">
+                          <span className="rec-ai-key rec-ai-key-caution">引っかかるかも</span>
+                          <span>{rec.caution}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="rec-next">
+                    <a href={library.url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost rec-next-btn">
+                      {library.label}
+                    </a>
+                    <span className="small" style={{ lineHeight: 1.9 }}>
+                      <span className="muted">感想を見る：</span>
+                      {reviews.map((l, i) => (
+                        <span key={l.key}>
+                          {i > 0 && <span className="muted">・</span>}
+                          <a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a>
+                        </span>
+                      ))}
+                      <span className="muted">・</span>
+                      <a href={rec.book.infoLink} target="_blank" rel="noopener noreferrer">Google Books</a>
+                    </span>
+                    <Link href={`/diagnose?from=${r.id}&add=${rec.book.volumeId}`} className="small">
+                      読んだら、この本も入れて診断し直す（いまの{others}冊＋1冊）→
+                    </Link>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </Section>
         )}
 
