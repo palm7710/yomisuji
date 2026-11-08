@@ -127,7 +127,7 @@ async function verifyRecommendations(recs: AnalysisText['recommendations'], sele
     const m = found[i];
     if (!m || used.has(m.volumeId) || out.length >= 3) return;
     used.add(m.volumeId);
-    out.push({ book: toPublic(m), reason: r.reason, tags: r.tags, surprise: r.surprise });
+    out.push({ book: toPublic(m), reason: r.reason, tags: r.tags, surprise: r.surprise, feel: r.feel, caution: r.caution });
   });
   // 「意外な一冊」は1冊だけに
   let seen = false;
