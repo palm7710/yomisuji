@@ -29,6 +29,9 @@ function stubFetch(deepseekReplies: unknown[]) {
       if (byId) return new Response(JSON.stringify(volume(byId[1], TITLES[byId[1]] ?? '不明')));
       // おすすめの実在確認：『悪人』だけ実在し、『架空の本』は見つからない
       if (decodeURIComponent(url).includes('悪人')) return new Response(JSON.stringify({ items: [volume('real0001', '悪人', '吉田修一')] }));
+      // 棚のテスト用：「実在」で始まる題名は見つかる
+      const real = decodeURIComponent(url).match(/intitle:(実在[^\s&]+)/);
+      if (real) return new Response(JSON.stringify({ items: [volume(`id-${real[1]}`, real[1], '著者')] }));
       return new Response(JSON.stringify({ items: [] }));
     }),
   );
@@ -46,8 +49,8 @@ const analysis = {
   hidden: null,
   evidence: [{ book_id: 'vol00001', reason: '科学の前提が揺らぐ一冊です。' }],
   recommendations: [
-    { title: '架空の本', author: '誰か', reason: 'ないはずの本です。', tags: ['mechanism'], surprise: false },
-    { title: '悪人', author: '吉田修一', reason: '人の弱さを描く一冊です。', tags: ['lies'], surprise: true },
+    { title: '架空の本', author: '誰か', reason: 'ないはずの本です。', tags: ['mechanism'], shelf: 'center' },
+    { title: '悪人', author: '吉田修一', reason: '人の弱さを描く一冊です。', tags: ['lies'], shelf: 'surprise' },
   ],
 };
 
@@ -109,12 +112,31 @@ describe('runDiagnosis', () => {
     expect(ds[0].body).toMatchObject({ model: 'deepseek-flash', response_format: { type: 'json_object' }, thinking: { type: 'disabled' } });
     // 出力の上限は本の数に合わせて締めてある
     expect(ds[0].body?.max_tokens).toBe(150 + 120 * IDS.length);
-    expect(ds[1].body?.max_tokens).toBe(2700 + 60 * IDS.length);
+    expect(ds[1].body?.max_tokens).toBe(3800 + 70 * IDS.length);
     // 送るJSONは改行・字下げなしで詰めてある
     const userMsg = (ds[0].body?.messages as { content: string }[])[1].content;
     expect(userMsg).not.toMatch(/\{\n /);
 
     expect(await loadResult(r.id)).toEqual(r);
+  });
+
+  it('おすすめを棚ごとに決まった冊数だけ残し、足りない棚はほかの本で埋めない', async () => {
+    const rec = (title: string, shelf: string) => ({ title, author: '著者', reason: 'すすめる理由です。', tags: ['mechanism'], shelf });
+    const recommendations = [
+      rec('実在C1', 'center'), rec('実在C2', 'center'), rec('実在C3', 'center'),
+      rec('実在D1', 'detour'), rec('架空D2', 'detour'), rec('実在D3', 'detour'),
+      rec('架空S1', 'stretch'), rec('架空S2', 'stretch'),
+      rec('実在U1', 'surprise'), rec('実在U2', 'surprise'),
+    ];
+    stubFetch([tagging, { ...analysis, recommendations }]);
+    const r = await runDiagnosis({ books: IDS });
+    expect(r.recommendations.map((x) => [x.shelf, x.book.title])).toEqual([
+      ['center', '実在C1'],
+      ['center', '実在C2'],
+      ['detour', '実在D1'],
+      ['detour', '実在D3'],
+      ['surprise', '実在U1'],
+    ]);
   });
 
   it('文章が検査に2回落ちたら定型文で結果を出す', async () => {
