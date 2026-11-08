@@ -45,6 +45,8 @@ export interface SearchBookMeta extends PublicBookMeta {
   seriesCount?: number;
   /** まとめ表示で代表にした巻。1巻が検索結果にあれば必ず1になる */
   seriesRepresentativeVolume?: number;
+  /** 検索語が著者名と一致した本（画面で「〇〇の本」として先に並べる） */
+  authorMatch?: boolean;
 }
 
 export function toPublic(m: BookMeta): PublicBookMeta {
@@ -71,6 +73,7 @@ interface VolumeJson {
       volumeSeries?: { seriesId?: string; orderNumber?: number }[];
     };
     industryIdentifiers?: { type?: string; identifier?: string }[];
+    language?: string;
   };
 }
 
@@ -119,6 +122,30 @@ export function normalizeTitle(s: string): string {
     .replace(/[\s・、。,.:：!！?？「」『』()（）\-‐―〜~]/g, '');
 }
 
+const EDITION_WORDS = '文庫版|新装版|新版|完全版|愛蔵版|特装版|限定特装版|限定版|通常版|単行本|電子版|電子特別版|特別版|決定版|合本版';
+
+/**
+ * 「文庫版」「〈限定特装版〉」「【映画化記念特典付】」「（新潮文庫）」など、版の違いを表す飾りを書名から外す。
+ * 同じ作品の版違いを1件にまとめるために使う
+ */
+export function stripEdition(title: string): string {
+  const stripped = title
+    .normalize('NFKC')
+    .replace(/【[^】]*】/g, ' ')
+    .replace(/[〈<《][^〉>》]*[〉>》]/g, ' ')
+    .replace(/[（(][^）)]*(文庫|新書|版|特典)[^）)]*[）)]/g, ' ')
+    .replace(new RegExp(`^(?:${EDITION_WORDS})[\\s　]*`), '')
+    .replace(new RegExp(`[\\s　]*(?:${EDITION_WORDS})$`), '')
+    .replace(/[\s　]+/g, ' ')
+    .trim();
+  return stripped || title;
+}
+
+/** 雑誌・ムックらしい書名 */
+function looksLikeMagazine(title: string): boolean {
+  return /\[雑誌\]|vol\.?\s*\d|magazine|\d{4}年\s*\d{1,2}月号|月号/i.test(title.normalize('NFKC'));
+}
+
 /** 書名の末尾にある巻数を分ける。「3月のライオン 17」は題名中の3を残して17だけ外す。 */
 export function splitSeriesTitle(title: string): { title: string; volume?: number } {
   const value = title.normalize('NFKC').trim();
@@ -156,11 +183,29 @@ function commonSeriesTitle(titles: string[], fallback: string): string {
   return normalizeTitle(cleaned).length >= 3 ? cleaned : fallback;
 }
 
-/** 巻違い・上下巻・Google Books上の同一シリーズを作品単位にまとめ、検索語に合う人気作品から返す。 */
+/**
+ * 検索語が著者名とどう一致するか。
+ * 3: 単著（または2人までの1人目）／2: 2人までの共著／1: アンソロジー・雑誌など大勢の中の1人／0: 一致なし
+ */
+function authorRank(book: BookMeta, queryKey: string): number {
+  if (!queryKey) return 0;
+  const keys = book.authors.map(normalizeTitle);
+  const hit = keys.indexOf(queryKey);
+  if (hit < 0) return 0;
+  if (keys.length > 2 || looksLikeMagazine(book.title)) return 1;
+  return hit === 0 ? 3 : 2;
+}
+
+/**
+ * 巻違い・上下巻・版違い（文庫版・特装版など）・Google Books上の同一シリーズを作品単位にまとめ、検索語に合う順に返す。
+ * 検索語が著者名と一致するときは、その著者の単著 → 共著 → アンソロジー・雑誌 → ほかの本 の順にする
+ * （Google Books の日本語の本には評価数がほとんど入っておらず、人気順には並べられないため）
+ */
 export function collapseBookSeries(books: BookMeta[], query = ''): SearchBookMeta[] {
+  const queryKey = normalizeTitle(query);
   const groups = new Map<string, { title: string; entries: { book: BookMeta; volume?: number; order: number }[] }>();
   books.forEach((book, order) => {
-    const series = splitSeriesTitle(book.title);
+    const series = splitSeriesTitle(stripEdition(book.title));
     const author = normalizeTitle(book.authors[0] ?? book.publisher ?? '');
     const key = book.seriesId ? `series:${book.seriesId}` : `title:${normalizeTitle(series.title)}|${author}`;
     const group = groups.get(key) ?? { title: series.title, entries: [] };
@@ -168,43 +213,60 @@ export function collapseBookSeries(books: BookMeta[], query = ''): SearchBookMet
     groups.set(key, group);
   });
 
+  type Group = { title: string; entries: { book: BookMeta; volume?: number; order: number }[] };
+  const textMatch = (value: string) => {
+    const key = normalizeTitle(value);
+    if (!queryKey || !key) return 0;
+    if (key === queryKey) return 5;
+    if (queryKey.startsWith(key) || key.startsWith(queryKey)) return 4;
+    if (queryKey.includes(key) || key.includes(queryKey)) return 3;
+    return 0;
+  };
+  const rankOf = (g: Group) => Math.max(...g.entries.map((e) => authorRank(e.book, queryKey)));
+  const match = (g: Group) =>
+    Math.max(textMatch(g.title), ...g.entries.flatMap((e) => [textMatch(e.book.title), ...e.book.authors.map(textMatch)]));
+  // 著者名で探したとき、題名に著者名が入った本（ガイド本・名言集など）は作品より後ろにする
+  const aboutAuthor = (g: Group) => (rankOf(g) >= 2 && normalizeTitle(g.title).includes(queryKey) ? 1 : 0);
+  const magazine = (g: Group) => (g.entries.every((e) => looksLikeMagazine(e.book.title)) ? 1 : 0);
+  const popularity = (g: Group) => Math.max(0, ...g.entries.map((e) => e.book.ratingsCount ?? 0));
+  const rating = (g: Group) => Math.max(0, ...g.entries.map((e) => e.book.averageRating ?? 0));
+
   return [...groups.values()]
-    .sort((a, b) => {
-      const queryKey = normalizeTitle(query);
-      const textMatch = (value: string) => {
-        const key = normalizeTitle(value);
-        if (!queryKey || !key) return 0;
-        if (key === queryKey) return 5;
-        if (queryKey.startsWith(key) || key.startsWith(queryKey)) return 4;
-        if (queryKey.includes(key) || key.includes(queryKey)) return 3;
-        return 0;
-      };
-      const match = (g: typeof a) =>
-        Math.max(
-          textMatch(g.title),
-          ...g.entries.flatMap((e) => [textMatch(e.book.title), ...e.book.authors.map(textMatch)]),
-        );
-      const popularity = (g: typeof a) => Math.max(0, ...g.entries.map((e) => e.book.ratingsCount ?? 0));
-      const rating = (g: typeof a) => Math.max(0, ...g.entries.map((e) => e.book.averageRating ?? 0));
-      return (
+    .sort(
+      (a, b) =>
+        rankOf(b) - rankOf(a) ||
+        aboutAuthor(a) - aboutAuthor(b) ||
+        magazine(a) - magazine(b) ||
         match(b) - match(a) ||
         popularity(b) - popularity(a) ||
+        // 版や巻がたくさん出ている作品ほど、よく読まれていると見なす
         b.entries.length - a.entries.length ||
         rating(b) - rating(a) ||
-        Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order))
-      );
-    })
+        Math.min(...a.entries.map((e) => e.order)) - Math.min(...b.entries.map((e) => e.order)),
+    )
     .map((group) => {
+      const plainTitle = (e: Group['entries'][number]) => (normalizeTitle(e.book.title) === normalizeTitle(group.title) ? 0 : 1);
       const representativeEntry = [...group.entries].sort((a, b) => {
         // 巻数不明の版より巻数が分かる版を優先し、1巻があれば必ず代表にする
         if (a.volume === undefined && b.volume !== undefined) return 1;
         if (a.volume !== undefined && b.volume === undefined) return -1;
-        return (a.volume ?? Number.MAX_SAFE_INTEGER) - (b.volume ?? Number.MAX_SAFE_INTEGER) || a.order - b.order;
+        return (
+          (a.volume ?? Number.MAX_SAFE_INTEGER) - (b.volume ?? Number.MAX_SAFE_INTEGER) ||
+          // 版違いだけのときは、飾りのない書名・表紙のある版を代表にする
+          plainTitle(a) - plainTitle(b) ||
+          (a.book.thumbnail ? 0 : 1) - (b.book.thumbnail ? 0 : 1) ||
+          a.order - b.order
+        );
       })[0];
       const representative = representativeEntry.book;
-      const publicBook = toPublic(representative);
-      if (group.entries.length === 1) return publicBook;
-      const title = commonSeriesTitle(group.entries.map((e) => splitSeriesTitle(e.book.title).title), group.title);
+      const authorMatch = rankOf(group) >= 2 ? { authorMatch: true } : {};
+      const publicBook = { ...toPublic(representative), ...authorMatch };
+      const cleanTitle = stripEdition(representative.title);
+      if (group.entries.length === 1) return cleanTitle === representative.title ? publicBook : { ...publicBook, seriesTitle: cleanTitle };
+      const volumes = new Set(group.entries.map((e) => e.volume).filter((v) => v !== undefined));
+      const title = commonSeriesTitle(group.entries.map((e) => splitSeriesTitle(stripEdition(e.book.title)).title), group.title);
+      // 巻数がない＝版違いだけのまとまり。シリーズとしては扱わず、作品名だけ整える
+      if (volumes.size === 0) return { ...publicBook, seriesTitle: title };
       return {
         ...publicBook,
         seriesTitle: title,
@@ -278,12 +340,15 @@ export async function searchBooks(query: string, max = 20): Promise<BookMeta[]> 
   const byAuthor = authorQuery(q);
   const [general, author] = await Promise.all([
     getJson<{ items?: VolumeJson[] }>(url(q, Math.min(40, max))),
-    byAuthor ? getJson<{ items?: VolumeJson[] }>(url(byAuthor, 20)) : Promise.resolve(null),
+    byAuthor ? getJson<{ items?: VolumeJson[] }>(url(byAuthor, 40)) : Promise.resolve(null),
   ]);
   const seen = new Set<string>();
   const out: BookMeta[] = [];
   // 並び順の最終判断は collapseBookSeries（著者名の完全一致を上位にする）に任せる
   for (const v of [...(general?.items ?? []), ...(author?.items ?? [])]) {
+    // langRestrict=ja でも台湾版・中国語版などが混ざるので、言語が分かるものは日本語だけにする
+    const lang = v.volumeInfo?.language;
+    if (lang && lang !== 'ja') continue;
     const m = parseVolume(v);
     if (!m) continue;
     const key = normalizeTitle(m.title) + '|' + normalizeTitle(m.authors[0] ?? '');
