@@ -36,5 +36,5 @@ export interface DiagnosisResult {
   disliked: string[];
   scoring: ScoringResult;
   text: Omit<AnalysisText, 'recommendations'>;
-  recommendations: { book: PublicBookMeta; reason: string; tags: TagId[]; surprise: boolean }[];
+  recommendations: { book: PublicBookMeta; reason: string; tags: TagId[]; surprise: boolean; feel?: string; caution?: string }[];
 }
