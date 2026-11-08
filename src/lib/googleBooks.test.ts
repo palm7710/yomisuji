@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildFindUrl, collapseBookSeries, findBook, getVolume, normalizeTitle, parseVolume, pickBestMatch, searchBooks, splitSeriesTitle, toPublic } from './googleBooks';
+import { authorQuery, buildFindUrl, collapseBookSeries, findBook, getVolume, normalizeTitle, parseVolume, pickBestMatch, searchBooks, splitSeriesTitle, toPublic } from './googleBooks';
 
 // Google Books API の返り値の形を模した見本（中身は試験用）
 const vol = (
@@ -141,6 +141,33 @@ describe('通信', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: [vol('1', '告白', ['湊かなえ']), vol('2', '告白', ['湊かなえ']), vol('3', '告白', ['町田康'])] }))));
     const r = await searchBooks('告白');
     expect(r.map((b) => b.volumeId)).toEqual(['1', '3']);
+  });
+
+  it('著者名でも検索し、ふつうの単語と同じ名前の作家（背筋）の本を上位に出す', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(String(input));
+      const items = url.includes('inauthor:背筋')
+        ? [vol('h1', '近畿地方のある場所について', ['背筋'], { ratings: 3 })]
+        : [vol('m1', '背筋を伸ばす習慣', ['体の先生'], { ratings: 50 }), vol('m2', '背筋トレーニング大全', ['筋トレ編集部'], { ratings: 40 })];
+      return new Response(JSON.stringify({ items }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const books = await searchBooks('背筋', 40);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(collapseBookSeries(books, '背筋')[0].volumeId).toBe('h1');
+  });
+
+  it('著者検索の語は名前らしい短い語のときだけ作る', () => {
+    expect(authorQuery('背筋')).toBe('inauthor:背筋');
+    expect(authorQuery('東野 圭吾')).toBe('inauthor:"東野 圭吾"');
+    expect(authorQuery('intitle:告白')).toBeNull();
+    expect(authorQuery('とても長い検索語とても長い検索語とても長い検索語とても長い検索語')).toBeNull();
+  });
+
+  it('ISBN-13 を取り出す', () => {
+    const v = vol('i1', '告白', ['湊かなえ']);
+    const withIsbn = { ...v, volumeInfo: { ...v.volumeInfo, industryIdentifiers: [{ type: 'ISBN_10', identifier: '4575513443' }, { type: 'ISBN_13', identifier: '9784575513440' }] } };
+    expect(parseVolume(withIsbn)?.isbn).toBe('9784575513440');
   });
 
   it('書名と著者で1冊特定する', async () => {
