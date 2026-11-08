@@ -26,6 +26,7 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const cfToken = process.env.CF_WEB_ANALYTICS_TOKEN;
   return (
     <html lang="ja">
       <head>
@@ -37,7 +38,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* ページの閲覧数・流入元・端末（Cloudflare Web Analytics。Cookie を使わない）。トークンを設定したときだけ読み込む */}
+        {cfToken && (
+          <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon={JSON.stringify({ token: cfToken })} />
+        )}
+      </body>
     </html>
   );
 }
