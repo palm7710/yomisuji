@@ -51,6 +51,14 @@ const good = {
 };
 
 describe('validateAnalysis', () => {
+  it('本に求めているもの・手紙を受け取り、選んでいない本の題名が入った手紙は捨てる', () => {
+    const ok = validateAnalysis({ ...good, core_need: '自分では行けない場所の、内側の空気', letter: 'あなたは『告白』と『白夜行』で、語る人が変わるたびに景色が変わる本を選んでいます。' }, ctx);
+    expect(ok.coreNeed).toBe('自分では行けない場所の、内側の空気');
+    expect(ok.letter).toContain('『告白』');
+    const ng = validateAnalysis({ ...good, letter: 'あなたは『ノルウェイの森』を選んでいます。' }, ctx);
+    expect(ng.letter).toBeUndefined();
+  });
+
   it('おすすめの読み味・引っかかるかもを受け取り、他人の感想のような文や長すぎる文はその項目だけ捨てる', () => {
     const recs = [
       { title: '悪人', author: '吉田修一', reason: '人の弱さを描く一冊です。', feel: '読み終えたあと、静かに胸が重くなる。', caution: '救いの少なさが気になるかも。', tags: ['lies'], surprise: false },
@@ -67,7 +75,8 @@ describe('validateAnalysis', () => {
     const r = validateAnalysis(good, ctx);
     expect(r.evidence.map((e) => e.bookId)).toEqual(['a']);
     expect(r.recommendations).toHaveLength(1);
-    expect(r.recommendations[0]).toMatchObject({ title: '悪人', tags: ['lies'], surprise: true });
+    // 棚が無い古い形でも、「意外な一冊」の印があれば surprise の棚に入れる
+    expect(r.recommendations[0]).toMatchObject({ title: '悪人', tags: ['lies'], shelf: 'surprise' });
   });
   it('選んでいない本の題名が説明に出てきたらエラー', () => {
     expect(() => validateAnalysis({ ...good, detail: '『ハリー・ポッター』のような物語が好きそうです。' }, ctx)).toThrow(InvalidAiOutputError);
