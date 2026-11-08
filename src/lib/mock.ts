@@ -60,6 +60,6 @@ export function mockAnalysis(ctx: AnalysisContext) {
     per_book: ctx.books.map((b) => ({ book_id: b.id, point: `（模擬）『${b.title}』では${TAGS[s.main].label}に惹かれていそうです。` })),
     mismatch: `（模擬）${TAGS[s.contrast].label}が中心の本は、少し合わないかもしれません。`,
     how_to_choose: '（模擬）帯や紹介文に「ラストで」「真相」とある本を探すと、好みに当たりやすそうです。',
-    recommendations: recs.map((b, i) => ({ title: b.title, author: b.author, reason: '（模擬）重なる面白さがありそうな一冊です。', tags: [s.main], surprise: i === 2 })),
+    recommendations: recs.map((b, i) => ({ title: b.title, author: b.author, reason: '（模擬）重なる面白さがありそうな一冊です。', feel: '（模擬）読み終えたあと、しばらく静かに余韻が続きそうです。', caution: '（模擬）序盤はゆっくり進むので、もどかしく感じるかも。', tags: [s.main], surprise: i === 2 })),
   };
 }
