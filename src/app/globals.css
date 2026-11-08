@@ -198,3 +198,44 @@ button { font-family: inherit; }
 .home-cta { margin-top: 14px; max-width: 340px; }
 .home-meta { font-size: 13px; }
 .home-note { margin: 0; font-size: 11.5px; line-height: 1.8; }
+
+/* 次に読むなら：AIの見立てと次の一歩 */
+.rec-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: rgba(46, 74, 115, 0.06);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.rec-ai-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+.rec-ai-row {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  gap: 8px;
+}
+.rec-ai-key {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.rec-ai-key-caution {
+  color: var(--vermilion);
+}
+.rec-next {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rec-next-btn {
+  font-size: 13.5px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
