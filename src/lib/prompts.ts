@@ -2,6 +2,7 @@
 // 検査は純粋な関数にしてあり、テストで確かめられる。
 
 import { AFTERTASTE_TAGS, ALL_TAGS, CORE_TAGS, GENRES, STYLE_TAGS, TAGS, type Genre, type TagId } from '@/data/tags';
+import { isShelf, type Shelf } from '@/data/shelves';
 import type { ScoringResult } from './scoring';
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ export function parseTaggingPartial(raw: unknown, ids: string[]): Map<string, Bo
 /** タグ付け1回分の出力の上限（本の数に合わせる） */
 export const taggingMaxTokens = (n: number) => 150 + 120 * n;
 /** 分析1回分の出力の上限（本の数に合わせる） */
-export const analysisMaxTokens = (n: number) => 2700 + 60 * n;
+export const analysisMaxTokens = (n: number) => 3800 + 70 * n;
 
 export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
   const byId = parseTaggingPartial(raw, ids);
@@ -100,7 +101,18 @@ export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
 
 export interface AnalysisContext {
   scoring: ScoringResult;
-  books: { id: string; title: string; author: string; genre: Genre; note: string; likedTags: TagId[]; likedLabels: string[]; favorite: boolean }[];
+  books: {
+    id: string;
+    title: string;
+    author: string;
+    genre: Genre;
+    note: string;
+    /** Google Books の内容紹介（短く切ったもの）。具体的に書くための手がかり */
+    about?: string;
+    likedTags: TagId[];
+    likedLabels: string[];
+    favorite: boolean;
+  }[];
 }
 
 export interface AnalysisText {
@@ -115,7 +127,8 @@ export interface AnalysisText {
     author: string;
     reason: string;
     tags: TagId[];
-    surprise: boolean;
+    /** どの棚のおすすめか（src/data/shelves.ts） */
+    shelf: Shelf;
     /** 読み味：読んでいるとき・読み終えたときの気持ち（AIの見立て） */
     feel?: string;
     /** この人が引っかかるかもしれないところ（AIの見立て） */
@@ -124,6 +137,10 @@ export interface AnalysisText {
   // ↓ 詳しい分析。どれもAIが書けなかったときは空のまま（画面ではその欄を出さない）
   /** 読み筋をひと言で（キャッチコピー） */
   catchphrase?: string;
+  /** 本に求めているもの（ひと言。たとえを使ってよい） */
+  coreNeed?: string;
+  /** あなたへの読み解き：具体的な観察 → 奥にある欲求 → 本人も気づいていない一面、の短い手紙 */
+  letter?: string;
   /** 読み方のくせ（2〜3個） */
   patterns?: { title: string; body: string }[];
   /** 本と本のつながり（1〜2個） */
@@ -144,10 +161,12 @@ export const LIMITS = {
   hidden: 90,
   reason: 70,
   catchphrase: 30,
+  coreNeed: 40,
+  letter: 340,
   patternTitle: 20,
-  patternBody: 90,
+  patternBody: 110,
   connection: 90,
-  point: 60,
+  point: 70,
   mismatch: 90,
   howToChoose: 100,
   feel: 50,
@@ -160,30 +179,47 @@ const HEARSAY = /(読者|レビュー|評判|口コミ|クチコミ|話題の|�
 /** 断定・評価に聞こえて避けたい言い回し */
 export const NG_WORDS = ['性格', '頭がいい', '頭が悪い', 'IQ', '異常', '天才', '凡人'];
 
-export const ANALYSIS_SYSTEM = `あなたは読書傾向を言葉にする、やさしい書評家です。
-渡された計算結果と本の情報だけをもとに、診断結果の文章とおすすめの本を書きます。出力は必ずJSONだけにしてください。
+export const ANALYSIS_SYSTEM = `あなたは、お客さんの本棚を見ただけで「この人が本に何を求めているか」を言い当てる、ベテランの書店員です。
+渡された本と計算結果をもとに、診断結果の文章とおすすめの本を書きます。出力は必ずJSONだけにしてください。
+
+目指すのは、読んだ人が「どうしてわかったの」と思う文章です。書く前に、頭の中で次の順に考えてください（考えた過程は出力しない）。
+1. 観察：選ばれた本を並べて、具体的な共通点を探す。題材、主人公や書き手の立場（組織の中か外か、子どもか大人か、当事者か観察者か）、よく出てくる場面、語り口、読み終えたときの温度、そして「選ばれていないもの」。
+2. 解釈：その共通点の奥にある、この人が本に求めているものを一つに絞る（例：「答えが出ないままでも、誰かが本気で考えた跡」「自分では行けない場所の、内側の空気」）。
+3. 意外な一面：本人も気づいていなさそうな組み合わせのズレや矛盾を一つ見つける（例：「読後はスカッとしたいのに、選ぶのは苦い結末の本」「実用書を選ぶときも、手順より“なぜそうするのか”の説明に惹かれている」）。
 
 書き方のルール：
-- 選ばれた本には、小説・マンガ・ライトノベル・エッセイ・ビジネス書・実用書・ノンフィクションなどが混ざる。どのジャンルを読む人が読んでも「自分のことだ」と思える言葉で書く。
-- 小説寄りの専門用語（伏線、叙述トリック、群像劇、プロット、メタ構造など）は使わず、ふだんの言葉で言い換える。
-- 「物語」「登場人物」は小説やマンガについて書くときだけ使う。本全体については「本」「書き手」「読み心地」などを使う。
-- タグの名前は、渡した日本語の名前をそのまま使う（英語のidは書かない）。
-- 結果は読書傾向の「仮説」として書く。文末は「〜かもしれません」「〜そうです」「〜が合いそうです」。
-- 性格・能力・心の状態を決めつけない。「性格」「頭がいい」などの評価の言葉を使わない。
-- 本の結末、犯人、仕掛けの中身などネタバレを書かない。作品について書くのは、渡した note と一般によく知られた特徴の範囲だけ。
+- 具体的に書く。どの文にも、本の題名とその本の具体的な要素（場面の種類、人物の立場、構成、語り口など）を入れる。タグの名前やジャンル名を言い換えるだけの文は書かない（得点やタグ名は画面に別に出ている）。
+- 誰にでも当てはまる文（例：「人の気持ちに敏感なようです」「新しい世界を知るのが好きなようです」）は書かない。この組み合わせの本棚でなければ書けないことを書く。
+- 決まり文句を使わない：「魅力的」「奥深い」「心に響く」「惹かれる傾向」「楽しめそう」「〜な面白さ」「世界観」「刺激」。
+- 観察したことは言い切る（「〜を選んでいます」「〜が並んでいます」）。推量の言い方（「〜のかもしれません」「〜のでは」）は、解釈を述べる文だけに使う。すべての文を推量にしない。
+- 選ばれた本には、小説・マンガ・ライトノベル・エッセイ・ビジネス書・実用書・ノンフィクション・写真集などが混ざる。ジャンルがばらばらでも、無理に一つの言葉でまとめず、ばらばらであること自体から読み取れることを書いてよい。
+- 小説寄りの専門用語（伏線、叙述トリック、群像劇、プロット、メタ構造など）は使わず、ふだんの言葉で言い換える。「物語」「登場人物」は小説やマンガについて書くときだけ使う。
+- タグの名前を書くときは、渡した日本語の名前をそのまま使う（英語のidは書かない）。
+- 読み方・本に求めているものについて書く。性格・能力・心の状態を決めつけない。「性格」「頭がいい」などの評価の言葉を使わない。
+- ネタバレを書かない（結末、犯人、仕掛けの中身）。作品について書くのは、渡した note・about と、その本について一般によく知られている特徴の範囲だけ。知らない本は、渡した情報からわかることだけを書く。
 - 本の題名を書くときは『』で囲む。渡していない本の題名は、おすすめ（recommendations）以外では書かない。
-- 文字数の上限を守る：summary ${LIMITS.summary}字、detail ${LIMITS.detail}字、aftertaste と style ${LIMITS.aftertaste}字、hidden ${LIMITS.hidden}字、reason ${LIMITS.reason}字、catchphrase ${LIMITS.catchphrase}字、patterns の title ${LIMITS.patternTitle}字・body ${LIMITS.patternBody}字、connections の text ${LIMITS.connection}字、per_book の point ${LIMITS.point}字、mismatch ${LIMITS.mismatch}字、how_to_choose ${LIMITS.howToChoose}字。
+- 文字数の上限を守る：summary ${LIMITS.summary}字、detail ${LIMITS.detail}字、core_need ${LIMITS.coreNeed}字、letter ${LIMITS.letter}字、aftertaste と style ${LIMITS.aftertaste}字、hidden ${LIMITS.hidden}字、reason ${LIMITS.reason}字、catchphrase ${LIMITS.catchphrase}字、patterns の title ${LIMITS.patternTitle}字・body ${LIMITS.patternBody}字、connections の text ${LIMITS.connection}字、per_book の point ${LIMITS.point}字、mismatch ${LIMITS.mismatch}字、how_to_choose ${LIMITS.howToChoose}字。
+
+各項目：
+- core_need は、手順2で絞った「本に求めているもの」をひと言で。たとえを使ってよい。タグ名を使わない。
+- letter は、この人に宛てた短い手紙。「あなたは」で語りかけ、4〜6文。①選んだ本のうち2冊以上を具体的に挙げた観察 → ②その奥にある本に求めているもの → ③本人も気づいていなさそうな意外な一面（手順3） → ④この人にとって本を読むことがどんな時間なのかを一文で、の順に書く。
+- summary は、診断の要点を、本人がはっとする言い方で1〜2文。
+- detail は、サブの面白さが、メインの面白さとどう組み合わさっているかを1〜2文。
 - catchphrase は、その人の読み筋を言い表す短い二つ名（例：「静かな謎に耳をすます人」「人の本音を拾い集める人」）。ジャンル名を入れない。タイプ名をそのまま繰り返さない。
-- patterns は、選んだ本や「好きなところ」から見える読み方のくせを2〜3個。抽象的な言葉だけで終わらせず、本の具体的な特徴に結びつける。
-- connections は、ジャンルの違う本どうしに共通する面白さを1〜2個。book_ids に2冊のidを入れる。
-- per_book は、選ばれた本すべてについて、この人が惹かれていそうなところを1文ずつ。liked（好きなところ）があればそれを生かす。
+- patterns は、選び方・読み方のくせを2〜3個。title は行動として書く（例：「主人公が輪の外にいる本を選ぶ」「解説より先に図を見る」）。body は、どの本のどこからそう言えるかを入れる。
+- connections は、ジャンルの違う本どうしに共通するものを1〜2個。book_ids に2冊のidを入れる。表面の共通点ではなく、読んでいるときの体験の共通点を書く。
+- per_book は、選ばれた本すべてについて、この人がその本のどこを味わっていそうかを1文ずつ。その本ならではの要素を入れる。liked（好きなところ）があればそれを生かす。favorite の本は特に丁寧に。
 - mismatch は、得点の低い面白さから、合わないかもしれない本の傾向をやわらかく1〜2文。特定の本や作家をけなさない。
-- how_to_choose は、次の本を探すときの具体的なヒント（キーワード、読み方、棚の歩き方など）を1〜2文。
+- how_to_choose は、次の本を探すときの具体的なヒント（帯や紹介文で探す言葉、棚の歩き方、読み方）を1〜2文。
 
 おすすめのルール：
 - 実在する本だけを挙げる。題名と著者名は、日本で流通している表記で正確に書く。自信がない本は挙げない。
 - 選ばれた本・同じシリーズの続編は挙げない。
-- 6冊挙げる。そのうち1冊だけ、選ばれた本にないジャンルから「意外な一冊」として surprise を true にする。
+- 10冊挙げ、それぞれ shelf（棚）を付ける。棚ごとの冊数は center 3冊、detour 3冊、stretch 2冊、surprise 2冊。同じ本を2つの棚に入れない。
+  - center（ど真ん中）：メインの面白さがいちばん強い本。この人が迷わず楽しめる本。
+  - detour（寄り道）：サブの面白さ、または隠れた好みが強い本。メインとは少し違う入口から楽しめる本。
+  - stretch（ちょっと背伸び）：いちばん得点の低い面白さがはっきり入っているが、メインの面白さか好きな読後感も持っていて入りやすい本。reason は「〜は少し遠いかもしれないけれど、〜があるから入りやすい」のように、遠い面白さと入口の両方を書く。
+  - surprise（意外な一冊）：選ばれた本のどのジャンルにも当てはまらないジャンルで、メインの面白さが通じる本。reason では、ジャンルが違っても通じる理由を書く。
 - tags には、その本と利用者で重なるタグのidを1〜2個入れる。
 - reason は、この人の読み筋のどこにその本が合いそうかを1文で。
 - feel は、商品紹介ではわからない「読み味」を1文で（${LIMITS.feel}字まで）。読んでいる間や読み終えたあとにどんな気持ちになるか（例：「ページを閉じたあと、しばらく窓の外を眺めたくなる静けさ」）。あらすじやネタバレは書かない。
@@ -212,6 +248,7 @@ ${JSON.stringify(
     author: b.author,
     genre: b.genre,
     note: b.note,
+    about: b.about || undefined,
     favorite: b.favorite,
     liked: b.likedLabels,
     liked_tags: b.likedTags.map((t) => TAGS[t].label),
@@ -220,8 +257,10 @@ ${JSON.stringify(
 
 次の形のJSONで返してください。
 {
- "summary": "「ジャンルは${s.majorityGenre}。でも惹かれているのは…かもしれません。」の形の1〜2文",
- "detail": "サブの面白さや、選んだ本どうしのつながりを1〜2文",
+ "core_need": "本に求めているものをひと言で",
+ "letter": "この人への短い手紙（4〜6文）",
+ "summary": "診断の要点1〜2文",
+ "detail": "サブとメインの組み合わせ1〜2文",
  "aftertaste": "好きな読後感について1文",
  "style": "好きな書き方について1文",
  "hidden": ${s.hidden ? '"隠れた好みについて1文"' : 'null'},
@@ -232,7 +271,7 @@ ${JSON.stringify(
  "per_book": [{"book_id": "選ばれた本のid", "point": "惹かれていそうなところ1文"}],
  "mismatch": "合わないかもしれない本の傾向",
  "how_to_choose": "次の本の選び方のヒント",
- "recommendations": [{"title": "題名", "author": "著者", "reason": "合いそうなところ1文", "feel": "読み味1文", "caution": "引っかかるかもしれないところ1文", "tags": ["mechanism"], "surprise": false}]
+ "recommendations": [{"title": "題名", "author": "著者", "reason": "合いそうなところ1文", "feel": "読み味1文", "caution": "引っかかるかもしれないところ1文", "tags": ["mechanism"], "shelf": "center"}]
 }`;
 }
 
@@ -306,7 +345,8 @@ export function validateAnalysis(raw: unknown, ctx: AnalysisContext): AnalysisTe
       author,
       reason,
       tags,
-      surprise: rec.surprise === true,
+      // 棚がない・おかしいときは、以前の「意外な一冊」の印を見て、それ以外はど真ん中に入れる
+      shelf: isShelf(rec.shelf) ? rec.shelf : rec.surprise === true ? 'surprise' : 'center',
       feel: optional(rec.feel, LIMITS.feel),
       caution: optional(rec.caution, LIMITS.caution),
     });
@@ -326,6 +366,8 @@ export function validateAnalysis(raw: unknown, ctx: AnalysisContext): AnalysisTe
   const ids = new Set(ctx.books.map((b) => b.id));
 
   const catchphrase = soft(r.catchphrase, LIMITS.catchphrase);
+  const coreNeed = soft(r.core_need, LIMITS.coreNeed);
+  const letter = soft(r.letter, LIMITS.letter);
   const patterns = arr(r.patterns)
     .map((p) => ({ title: soft(p?.title, LIMITS.patternTitle), body: soft(p?.body, LIMITS.patternBody) }))
     .filter((p): p is { title: string; body: string } => !!p.title && !!p.body)
@@ -355,6 +397,8 @@ export function validateAnalysis(raw: unknown, ctx: AnalysisContext): AnalysisTe
     evidence,
     recommendations,
     catchphrase,
+    coreNeed,
+    letter,
     patterns,
     connections,
     perBook,
