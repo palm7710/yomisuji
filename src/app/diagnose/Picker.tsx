@@ -49,10 +49,10 @@ function useBookSearch(query: string) {
   return { results, searching };
 }
 
-export function Picker() {
+export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
   const router = useRouter();
   const [query, setQuery] = useState('');
-  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [draft, setDraft] = useState<Draft>(initial ? { selected: initial } : EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [justAdded, setJustAdded] = useState('');
@@ -61,7 +61,9 @@ export function Picker() {
   const search = useBookSearch(query);
 
   // 選んだ本を端末に一時保存し、戻る操作や再読み込みで消えないようにする
+  // （結果ページから「診断し直す」で来たときは、渡された本を優先する）
   useEffect(() => {
+    if (initial) return;
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY);
       if (saved) {
