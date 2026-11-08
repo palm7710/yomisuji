@@ -8,7 +8,45 @@ import { ReadingCat } from '@/components/ReadingCat';
 import type { SearchBookMeta } from '@/lib/googleBooks';
 import { MAX_BOOKS, MIN_BOOKS } from '@/lib/scoring';
 
-const STORAGE_KEY = 'yomisuji:draft:v5';
+// 選んだ本は端末（localStorage）に保存し、タブを閉じて再訪問しても残す
+const STORAGE_KEY = 'yomisuji:draft:v6';
+/** 以前のタブ内だけの保存先（移行のために一度だけ読む） */
+const LEGACY_SESSION_KEY = 'yomisuji:draft:v5';
+
+/** 保存されていた中身を確かめて、本の一覧として使える形だけ返す */
+function parseSaved(raw: string | null): SearchBookMeta[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<Draft>;
+    if (!Array.isArray(parsed.selected)) return null;
+    return parsed.selected
+      .filter((b): b is SearchBookMeta => !!b && typeof b.volumeId === 'string' && typeof b.title === 'string' && Array.isArray(b.authors))
+      .slice(0, MAX_BOOKS);
+  } catch {
+    return null;
+  }
+}
+
+function loadDraft(): SearchBookMeta[] | null {
+  try {
+    const saved = parseSaved(localStorage.getItem(STORAGE_KEY));
+    if (saved) return saved;
+    const legacy = parseSaved(sessionStorage.getItem(LEGACY_SESSION_KEY));
+    sessionStorage.removeItem(LEGACY_SESSION_KEY);
+    return legacy;
+  } catch {
+    return null; // 保存できない環境（プライベートモードなど）ではそのまま
+  }
+}
+
+function saveDraft(draft: Draft) {
+  try {
+    if (draft.selected.length === 0) localStorage.removeItem(STORAGE_KEY);
+    else localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    /* noop */
+  }
+}
 
 interface Draft {
   selected: SearchBookMeta[];
@@ -60,27 +98,22 @@ export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
 
   const search = useBookSearch(query);
 
-  // 選んだ本を端末に一時保存し、戻る操作や再読み込みで消えないようにする
-  // （結果ページから「診断し直す」で来たときは、渡された本を優先する）
+  // 選んだ本を端末に保存し、再読み込みや再訪問でも消えないようにする。
+  // 読み込みが終わるまでは保存しない（空の状態で上書きしないため）
+  // 結果ページから「診断し直す」で来たときは、渡された本を優先して保存し直す
+  const [restored, setRestored] = useState(false);
   useEffect(() => {
-    if (initial) return;
-    try {
-      const saved = sessionStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<Draft>;
-        if (Array.isArray(parsed.selected)) setDraft({ selected: parsed.selected });
-      }
-    } catch {
-      /* 保存できない環境ではそのまま */
+    if (!initial) {
+      const saved = loadDraft();
+      if (saved && saved.length > 0) setDraft({ selected: saved });
     }
+    setRestored(true);
+    // 最初の表示のときだけ読み込む
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
-    } catch {
-      /* noop */
-    }
-  }, [draft]);
+    if (restored) saveDraft(draft);
+  }, [draft, restored]);
 
   const selectedIds = useMemo(() => new Set(draft.selected.map((b) => b.volumeId)), [draft.selected]);
   const count = draft.selected.length;
@@ -161,7 +194,9 @@ export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
                 ? search.searching
                   ? '検索しています…'
                   : search.results
-                    ? `${search.results.length}件見つかりました。人気度の高い順に表示しています`
+                    ? search.results.some((b) => b.authorMatch)
+                      ? `${search.results.length}件見つかりました。著者名が一致する本を先に表示しています`
+                      : `${search.results.length}件見つかりました。書名が近い順に表示しています`
                     : ''
                 : justAdded
                   ? `『${justAdded}』を追加しました。続けて探せます`
@@ -175,16 +210,25 @@ export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
               <p className="muted" style={{ fontSize: 14 }}>見つかりませんでした。書名の一部や著者名でも探せます。</p>
             ) : (
               <ul className="result-list" aria-label="検索結果">
-                {(search.results ?? []).map((b) => {
+                {(search.results ?? []).map((b, i, list) => {
                   const on = selectedIds.has(b.volumeId);
+                  const hasAuthor = list.some((x) => x.authorMatch);
+                  // 著者名で見つかった本と、それ以外の本の境目に見出しを出す
+                  const heading =
+                    hasAuthor && i === 0
+                      ? `「${query.trim()}」の本`
+                      : hasAuthor && !b.authorMatch && list[i - 1]?.authorMatch
+                        ? `「${query.trim()}」を含むほかの本`
+                        : '';
                   return (
                     <li key={b.volumeId}>
+                      {heading && <h3 className="result-heading">{heading}</h3>}
                       <button className="result-row" onClick={() => (on ? removeBook(b) : addBook(b))} aria-pressed={on}>
                         <span style={{ width: 44, flexShrink: 0 }}>
                           <CoverImage book={b} />
                         </span>
                         <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flexGrow: 1 }}>
-                          <span className="book-title" style={{ fontSize: 14 }}>{b.title}</span>
+                          <span className="book-title" style={{ fontSize: 14 }}>{displayTitle(b)}</span>
                           {(b.seriesCount ?? 0) > 1 && (
                             <span className="small muted">
                               {b.seriesRepresentativeVolume === 1 ? '1巻目' : '先頭の巻'}を表示し、同じシリーズの検索結果を1件にまとめています
@@ -216,7 +260,13 @@ export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
             </div>
           ) : (
             <section aria-labelledby="sel-h">
-              <h2 id="sel-h" className="label" style={{ marginBottom: 12 }}>選んだ本（タップで外す）</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+                <h2 id="sel-h" className="label" style={{ margin: 0 }}>選んだ本（タップで外す）</h2>
+                <button type="button" className="link-button small" onClick={() => setDraft(EMPTY)}>
+                  すべて外す
+                </button>
+              </div>
+              <p className="small muted" style={{ margin: '0 0 12px' }}>選んだ本はこの端末に保存され、次に開いたときも残っています。</p>
               <div className="book-grid">
                 {draft.selected.map((b) => (
                   <button key={b.volumeId} className="book-tile" onClick={() => removeBook(b)} aria-label={`『${displayTitle(b)}』を外す`}>
