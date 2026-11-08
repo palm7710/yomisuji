@@ -188,3 +188,13 @@ button { font-family: inherit; }
 @keyframes rc-flip { 0%, 72% { transform: scaleX(1); } 88%, 100% { transform: scaleX(-1); } }
 @keyframes rc-dot { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .rc-cat *, .rc-dots span { animation: none !important; } }
+
+/* トップページ */
+.home { padding-top: 32px; padding-bottom: 28px; justify-content: space-between; text-align: center; }
+.home-logo { font-weight: 800; font-size: 18px; letter-spacing: 0.12em; }
+.home-hero { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.home-kicker { margin: 0; font-weight: 700; font-size: 16px; color: var(--ink-2); }
+.home-title { margin: 0; font-weight: 800; font-size: 30px; line-height: 1.55; }
+.home-cta { margin-top: 14px; max-width: 340px; }
+.home-meta { font-size: 13px; }
+.home-note { margin: 0; font-size: 11.5px; line-height: 1.8; }
