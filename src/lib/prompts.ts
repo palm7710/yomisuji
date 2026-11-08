@@ -85,7 +85,7 @@ export function parseTaggingPartial(raw: unknown, ids: string[]): Map<string, Bo
 /** タグ付け1回分の出力の上限（本の数に合わせる） */
 export const taggingMaxTokens = (n: number) => 150 + 120 * n;
 /** 分析1回分の出力の上限（本の数に合わせる） */
-export const analysisMaxTokens = (n: number) => 2000 + 60 * n;
+export const analysisMaxTokens = (n: number) => 2700 + 60 * n;
 
 export function validateTagging(raw: unknown, ids: string[]): BookTagging[] {
   const byId = parseTaggingPartial(raw, ids);
@@ -110,7 +110,17 @@ export interface AnalysisText {
   style: string;
   hidden?: string;
   evidence: { bookId: string; reason: string }[];
-  recommendations: { title: string; author: string; reason: string; tags: TagId[]; surprise: boolean }[];
+  recommendations: {
+    title: string;
+    author: string;
+    reason: string;
+    tags: TagId[];
+    surprise: boolean;
+    /** 読み味：読んでいるとき・読み終えたときの気持ち（AIの見立て） */
+    feel?: string;
+    /** この人が引っかかるかもしれないところ（AIの見立て） */
+    caution?: string;
+  }[];
   // ↓ 詳しい分析。どれもAIが書けなかったときは空のまま（画面ではその欄を出さない）
   /** 読み筋をひと言で（キャッチコピー） */
   catchphrase?: string;
@@ -140,7 +150,12 @@ export const LIMITS = {
   point: 60,
   mismatch: 90,
   howToChoose: 100,
+  feel: 50,
+  caution: 50,
 };
+
+/** 他人の感想を見てきたように読める言い回し（AIの見立てとしては出さない） */
+const HEARSAY = /(読者|レビュー|評判|口コミ|クチコミ|話題の|多くの人|みんなが|と評され)/;
 
 /** 断定・評価に聞こえて避けたい言い回し */
 export const NG_WORDS = ['性格', '頭がいい', '頭が悪い', 'IQ', '異常', '天才', '凡人'];
@@ -169,7 +184,11 @@ export const ANALYSIS_SYSTEM = `あなたは読書傾向を言葉にする、や
 - 実在する本だけを挙げる。題名と著者名は、日本で流通している表記で正確に書く。自信がない本は挙げない。
 - 選ばれた本・同じシリーズの続編は挙げない。
 - 6冊挙げる。そのうち1冊だけ、選ばれた本にないジャンルから「意外な一冊」として surprise を true にする。
-- tags には、その本と利用者で重なるタグのidを1〜2個入れる。`;
+- tags には、その本と利用者で重なるタグのidを1〜2個入れる。
+- reason は、この人の読み筋のどこにその本が合いそうかを1文で。
+- feel は、商品紹介ではわからない「読み味」を1文で（${LIMITS.feel}字まで）。読んでいる間や読み終えたあとにどんな気持ちになるか（例：「ページを閉じたあと、しばらく窓の外を眺めたくなる静けさ」）。あらすじやネタバレは書かない。
+- caution は、この人の得点の低い面白さや好みから見て、引っかかるかもしれないところを1文で（${LIMITS.caution}字まで）。本をけなさず、「〜が気になるかも」とやわらかく書く。
+- feel と caution は、あなた自身の見立てとして書く。「読者の多くが」「評判では」など、他の人の感想や評価を見たかのような書き方はしない。`;
 
 export function analysisUserPrompt(ctx: AnalysisContext): string {
   const s = ctx.scoring;
@@ -213,7 +232,7 @@ ${JSON.stringify(
  "per_book": [{"book_id": "選ばれた本のid", "point": "惹かれていそうなところ1文"}],
  "mismatch": "合わないかもしれない本の傾向",
  "how_to_choose": "次の本の選び方のヒント",
- "recommendations": [{"title": "題名", "author": "著者", "reason": "すすめる理由1文", "tags": ["mechanism"], "surprise": false}]
+ "recommendations": [{"title": "題名", "author": "著者", "reason": "合いそうなところ1文", "feel": "読み味1文", "caution": "引っかかるかもしれないところ1文", "tags": ["mechanism"], "surprise": false}]
 }`;
 }
 
@@ -273,7 +292,24 @@ export function validateAnalysis(raw: unknown, ctx: AnalysisContext): AnalysisTe
       continue;
     }
     const tags = (Array.isArray(rec.tags) ? rec.tags : []).filter((t): t is TagId => (ALL_TAGS as readonly unknown[]).includes(t)).slice(0, 2);
-    recommendations.push({ title, author, reason, tags, surprise: rec.surprise === true });
+    // 読み味・引っかかるかも は任意。だめならその項目だけ捨てる
+    const optional = (v: unknown, limit: number): string | undefined => {
+      try {
+        const t = cleanText(v, limit);
+        return HEARSAY.test(t) ? undefined : t;
+      } catch {
+        return undefined;
+      }
+    };
+    recommendations.push({
+      title,
+      author,
+      reason,
+      tags,
+      surprise: rec.surprise === true,
+      feel: optional(rec.feel, LIMITS.feel),
+      caution: optional(rec.caution, LIMITS.caution),
+    });
   }
 
   // 詳しい分析：1項目ずつ検査し、だめな項目だけ捨てる（全体はやり直さない）
