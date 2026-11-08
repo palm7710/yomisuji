@@ -3,6 +3,8 @@ import { BadRequestError, runDiagnosis } from '@/lib/analyze';
 import { AiUnavailableError, isConfigured } from '@/lib/deepseek';
 import { InvalidAiOutputError } from '@/lib/prompts';
 import type { DiagnoseRequest } from '@/lib/types';
+import { bookCountEvent, dayKey } from '@/lib/events';
+import { incrementCounters } from '@/lib/store';
 
 // DeepSeek を2回呼ぶので時間がかかる（Vercel などで関数の制限時間を延ばす）
 export const maxDuration = 60;
@@ -38,8 +40,10 @@ export async function POST(req: Request) {
 
   try {
     const result = await runDiagnosis(body);
+    await incrementCounters(dayKey(), ['diagnose_done', bookCountEvent(result.books.length)]);
     return NextResponse.json({ id: result.id });
   } catch (e) {
+    await incrementCounters(dayKey(), ['diagnose_error']);
     if (e instanceof BadRequestError) return NextResponse.json({ error: e.message }, { status: 400 });
     if (e instanceof AiUnavailableError || e instanceof InvalidAiOutputError) {
       console.error('[diagnose]', e);
