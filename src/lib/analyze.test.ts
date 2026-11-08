@@ -109,7 +109,7 @@ describe('runDiagnosis', () => {
     expect(ds[0].body).toMatchObject({ model: 'deepseek-flash', response_format: { type: 'json_object' }, thinking: { type: 'disabled' } });
     // 出力の上限は本の数に合わせて締めてある
     expect(ds[0].body?.max_tokens).toBe(150 + 120 * IDS.length);
-    expect(ds[1].body?.max_tokens).toBe(2000 + 60 * IDS.length);
+    expect(ds[1].body?.max_tokens).toBe(2700 + 60 * IDS.length);
     // 送るJSONは改行・字下げなしで詰めてある
     const userMsg = (ds[0].body?.messages as { content: string }[])[1].content;
     expect(userMsg).not.toMatch(/\{\n /);
