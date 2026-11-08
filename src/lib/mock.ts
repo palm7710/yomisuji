@@ -42,8 +42,12 @@ export function mockAnalysis(ctx: AnalysisContext) {
     { title: '舟を編む', author: '三浦しをん' },
     { title: '変な家', author: '雨穴' },
     { title: '精霊の守り人', author: '上橋菜穂子' },
+    { title: '博士の愛した数式', author: '小川洋子' },
+    { title: 'コンビニ人間', author: '村田沙耶香' },
+    { title: 'サピエンス全史', author: 'ユヴァル・ノア・ハラリ' },
+    { title: 'よつばと！', author: 'あずまきよひこ' },
   ];
-  const recs = pool.filter((b) => !selected.has(b.title)).sort(() => Math.random() - 0.5).slice(0, 6);
+  const recs = pool.filter((b) => !selected.has(b.title)).sort(() => Math.random() - 0.5).slice(0, 10);
   return {
     summary: `（模擬）ジャンルは${s.majorityGenre}。でも惹かれているのは、${TAGS[s.main].essence}かもしれません。`,
     detail: `（模擬）${TAGS[s.sub].essence}にも惹かれていそうです。`,
@@ -52,6 +56,8 @@ export function mockAnalysis(ctx: AnalysisContext) {
     hidden: s.hidden ? `（模擬）実は${TAGS[s.hidden].essence}にも惹かれていそうです。` : null,
     evidence: s.evidence.map((e) => ({ book_id: e.bookId, reason: `（模擬）「${TAGS[s.main].label}」に効いた一冊です。` })),
     catchphrase: '（模擬）静かな謎に耳をすます人',
+    core_need: '（模擬）答えが出ないままでも、誰かが本気で考えた跡',
+    letter: `（模擬）あなたは『${ctx.books[0].title}』のように、人が自分の立場から本音をこぼす本を選んでいます。どの本でも、出来事そのものより、その人がなぜそう動いたのかを追っているようです。読後はすっきりしたいと言いながら、選ぶ本は苦さの残るものばかりなのが面白いところです。あなたにとって読書は、人の内側を安心してのぞける時間なのかもしれません。`,
     patterns: [
       { title: '（模擬）入り口は人物', body: '（模擬）物語の設定よりも、登場人物の気持ちの動きから本に入っていくようです。' },
       { title: '（模擬）最後まで見届けたい', body: '（模擬）結末で意味が変わる構成に、強く惹かれていそうです。' },
@@ -60,6 +66,6 @@ export function mockAnalysis(ctx: AnalysisContext) {
     per_book: ctx.books.map((b) => ({ book_id: b.id, point: `（模擬）『${b.title}』では${TAGS[s.main].label}に惹かれていそうです。` })),
     mismatch: `（模擬）${TAGS[s.contrast].label}が中心の本は、少し合わないかもしれません。`,
     how_to_choose: '（模擬）帯や紹介文に「ラストで」「真相」とある本を探すと、好みに当たりやすそうです。',
-    recommendations: recs.map((b, i) => ({ title: b.title, author: b.author, reason: '（模擬）重なる面白さがありそうな一冊です。', feel: '（模擬）読み終えたあと、しばらく静かに余韻が続きそうです。', caution: '（模擬）序盤はゆっくり進むので、もどかしく感じるかも。', tags: [s.main], surprise: i === 2 })),
+    recommendations: recs.map((b, i) => ({ title: b.title, author: b.author, reason: '（模擬）重なる面白さがありそうな一冊です。', feel: '（模擬）読み終えたあと、しばらく静かに余韻が続きそうです。', caution: '（模擬）序盤はゆっくり進むので、もどかしく感じるかも。', tags: [s.main], shelf: (['center', 'center', 'center', 'detour', 'detour', 'detour', 'stretch', 'stretch', 'surprise', 'surprise'] as const)[i] })),
   };
 }
