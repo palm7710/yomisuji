@@ -169,3 +169,87 @@ export async function saveTags(tags: BookTagging[]): Promise<void> {
     console.warn(`[store] saveTags failed: ${(e as Error).message}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// アクセス解析の回数（日ごと・操作ごと。src/lib/events.ts）
+// Upstash：HINCRBY で正確に数える。
+// Cloudflare KV：読んで足して書く。同時に押されると取りこぼすことがあるので「おおよその回数」になる。
+//   また KV の無料枠は書き込みが1日1,000回までなので、アクセスが増えたら Upstash を設定する。
+// ファイル：手元の開発用。
+// ---------------------------------------------------------------------------
+
+const STATS_TTL_SECONDS = 60 * 60 * 24 * 400;
+const statsKey = (day: string) => `s:${day}`;
+const kvStatsKey = (day: string, event: string) => `s:${day}:${event}`;
+
+/** 回数を1ずつ足す。失敗しても例外は投げない（解析のせいで診断を止めない） */
+export async function incrementCounters(day: string, events: string[]): Promise<void> {
+  if (events.length === 0) return;
+  try {
+    const up = upstash();
+    if (up) {
+      await Promise.all(events.map((e) => upstashCommand(up, ['HINCRBY', statsKey(day), e, 1])));
+      await upstashCommand(up, ['EXPIRE', statsKey(day), STATS_TTL_SECONDS]);
+      return;
+    }
+    const kv = await cloudflareKv();
+    if (kv) {
+      await Promise.all(
+        events.map(async (e) => {
+          const now = Number((await kv.get(kvStatsKey(day, e))) ?? 0) || 0;
+          await kv.put(kvStatsKey(day, e), String(now + 1), { expirationTtl: STATS_TTL_SECONDS });
+        }),
+      );
+      return;
+    }
+    const dir = path.join(dataDir(), 'stats');
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, `${day}.json`);
+    const counts = await fs.readFile(file, 'utf8').then((s) => JSON.parse(s) as Record<string, number>).catch(() => ({}) as Record<string, number>);
+    for (const e of events) counts[e] = (counts[e] ?? 0) + 1;
+    await fs.writeFile(file, JSON.stringify(counts));
+  } catch (e) {
+    console.warn(`[store] incrementCounters failed: ${(e as Error).message}`);
+  }
+}
+
+/** 指定した日ごとの回数を返す（{ 日付: { 操作: 回数 } }） */
+export async function loadCounters(days: string[], events: string[]): Promise<Record<string, Record<string, number>>> {
+  const out: Record<string, Record<string, number>> = Object.fromEntries(days.map((d) => [d, {}]));
+  try {
+    const up = upstash();
+    if (up) {
+      await Promise.all(
+        days.map(async (d) => {
+          const flat = ((await upstashCommand(up, ['HGETALL', statsKey(d)])) as string[] | null) ?? [];
+          for (let i = 0; i + 1 < flat.length; i += 2) out[d][flat[i]] = Number(flat[i + 1]) || 0;
+        }),
+      );
+      return out;
+    }
+    const kv = await cloudflareKv();
+    if (kv) {
+      await Promise.all(
+        days.flatMap((d) =>
+          events.map(async (e) => {
+            const v = await kv.get(kvStatsKey(d, e));
+            if (v) out[d][e] = Number(v) || 0;
+          }),
+        ),
+      );
+      return out;
+    }
+    await Promise.all(
+      days.map(async (d) => {
+        try {
+          out[d] = JSON.parse(await fs.readFile(path.join(dataDir(), 'stats', `${d}.json`), 'utf8')) as Record<string, number>;
+        } catch {
+          /* その日は0回 */
+        }
+      }),
+    );
+  } catch (e) {
+    console.warn(`[store] loadCounters failed: ${(e as Error).message}`);
+  }
+  return out;
+}
