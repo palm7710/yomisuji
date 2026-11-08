@@ -9,13 +9,13 @@ export const metadata: Metadata = {
   openGraph: {
     title: '読み筋診断（仮）',
     description: '小説もマンガも実用書も。好きな本から、本当に惹かれているものを言葉にする読書タイプ診断',
-    images: [{ url: '/yomisuji-intro.png', width: 1734, height: 907, alt: '読み筋診断の紹介' }],
+    images: [{ url: '/yomisuji-thumbnail.png', width: 1200, height: 630, alt: '読み筋診断｜好きな本から、本当に惹かれているものを言葉にします。' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: '読み筋診断（仮）',
     description: '小説もマンガも実用書も。好きな本から、本当に惹かれているものを言葉にする読書タイプ診断',
-    images: ['/yomisuji-intro.png'],
+    images: ['/yomisuji-thumbnail.png'],
   },
 };
 
