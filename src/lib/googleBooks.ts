@@ -23,6 +23,8 @@ export interface BookMeta {
   thumbnail?: string;
   /** Google Books の書籍ページ。画面では必ずこのリンクを付ける */
   infoLink: string;
+  /** ISBN（13桁を優先）。図書館検索のリンクに使う */
+  isbn?: string;
   categories?: string[];
   /** 内容紹介（AIへの手がかりとしてだけ使い、画面には出さない） */
   description?: string;
@@ -68,6 +70,7 @@ interface VolumeJson {
     seriesInfo?: {
       volumeSeries?: { seriesId?: string; orderNumber?: number }[];
     };
+    industryIdentifiers?: { type?: string; identifier?: string }[];
   };
 }
 
@@ -84,6 +87,7 @@ export function parseVolume(v: VolumeJson): BookMeta | null {
     publishedDate: info.publishedDate,
     thumbnail: rawThumb ? toHttps(rawThumb).replace('&edge=curl', '') : undefined,
     infoLink: toHttps(info.infoLink ?? info.canonicalVolumeLink ?? `https://books.google.com/books?id=${v.id}`),
+    isbn: pickIsbn(info.industryIdentifiers),
     categories: info.categories,
     description: info.description ? stripHtml(info.description).slice(0, 600) : undefined,
     ratingsCount: info.ratingsCount,
@@ -91,6 +95,12 @@ export function parseVolume(v: VolumeJson): BookMeta | null {
     seriesId: info.seriesInfo?.volumeSeries?.[0]?.seriesId,
     seriesOrder: info.seriesInfo?.volumeSeries?.[0]?.orderNumber,
   };
+}
+
+function pickIsbn(ids?: { type?: string; identifier?: string }[]): string | undefined {
+  const get = (type: string) => ids?.find((x) => x.type === type)?.identifier?.replace(/-/g, '');
+  const isbn = get('ISBN_13') ?? get('ISBN_10');
+  return isbn && /^(\d{13}|\d{9}[\dX])$/.test(isbn) ? isbn : undefined;
 }
 
 function stripHtml(s: string): string {
@@ -250,16 +260,30 @@ async function getJson<T>(url: string): Promise<T | null> {
   }
 }
 
-/** 本選び画面の検索。日本語の本を優先し、同じ本の重複（版違い）はまとめる */
+/**
+ * 著者名として探すための検索語。名前らしい短い語のときだけ作る。
+ * 「背筋」のように普通の単語と同じ名前の作家は、ふつうの検索だと題名や内容紹介に負けて出てこないため
+ */
+export function authorQuery(q: string): string | null {
+  if (q.length > 30 || /[:：]/.test(q) || q.split(/\s+/).length > 3) return null;
+  return /\s/.test(q) ? `inauthor:"${q}"` : `inauthor:${q}`;
+}
+
+/** 本選び画面の検索。書名・キーワードと著者名の両方で探し、日本語の本を優先して、同じ本の重複（版違い）はまとめる */
 export async function searchBooks(query: string, max = 20): Promise<BookMeta[]> {
   const q = query.trim().slice(0, 100);
   if (!q) return [];
-  const json = await getJson<{ items?: VolumeJson[] }>(
-    `${API}?q=${encodeURIComponent(q)}&printType=books&maxResults=${Math.min(40, max)}&langRestrict=ja&orderBy=relevance`,
-  );
+  const url = (term: string, n: number) =>
+    `${API}?q=${encodeURIComponent(term)}&printType=books&maxResults=${n}&langRestrict=ja&orderBy=relevance`;
+  const byAuthor = authorQuery(q);
+  const [general, author] = await Promise.all([
+    getJson<{ items?: VolumeJson[] }>(url(q, Math.min(40, max))),
+    byAuthor ? getJson<{ items?: VolumeJson[] }>(url(byAuthor, 20)) : Promise.resolve(null),
+  ]);
   const seen = new Set<string>();
   const out: BookMeta[] = [];
-  for (const v of json?.items ?? []) {
+  // 並び順の最終判断は collapseBookSeries（著者名の完全一致を上位にする）に任せる
+  for (const v of [...(general?.items ?? []), ...(author?.items ?? [])]) {
     const m = parseVolume(v);
     if (!m) continue;
     const key = normalizeTitle(m.title) + '|' + normalizeTitle(m.authors[0] ?? '');
