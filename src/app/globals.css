@@ -239,3 +239,27 @@ button { font-family: inherit; }
   padding-top: 10px;
   padding-bottom: 10px;
 }
+
+/* 検索結果の区切り（著者名で見つかった本／ほかの本） */
+.result-heading {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+li:first-child > .result-heading {
+  margin-top: 0;
+}
+
+/* 文字だけのボタン（選んだ本を「すべて外す」など） */
+.link-button {
+  border: 0;
+  padding: 4px 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  font: inherit;
+}
