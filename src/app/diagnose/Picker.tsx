@@ -7,6 +7,7 @@ import { CoverImage, GoogleAttribution } from '@/components/BookCover';
 import { ReadingCat } from '@/components/ReadingCat';
 import type { SearchBookMeta } from '@/lib/googleBooks';
 import { MAX_BOOKS, MIN_BOOKS } from '@/lib/scoring';
+import { track } from '@/lib/track';
 
 // 選んだ本は端末（localStorage）に保存し、タブを閉じて再訪問しても残す
 const STORAGE_KEY = 'yomisuji:draft:v6';
@@ -74,7 +75,11 @@ function useBookSearch(query: string) {
       try {
         const res = await fetch(`/api/books/search?q=${encodeURIComponent(q)}`);
         const json = (await res.json()) as { books: SearchBookMeta[] };
-        if (seq === seqRef.current) setResults(json.books);
+        if (seq === seqRef.current) {
+          setResults(json.books);
+          // 回数だけ数える（検索語は送らない）
+          track(...(json.books.length === 0 ? (['search', 'search_zero'] as const) : (['search'] as const)));
+        }
       } catch {
         if (seq === seqRef.current) setResults([]);
       } finally {
@@ -122,6 +127,7 @@ export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
 
   const addBook = (b: SearchBookMeta) => {
     if (selectedIds.has(b.volumeId) || full) return;
+    if (draft.selected.length === 0) track('pick_start');
     setDraft((d) => ({ selected: [...d.selected, b] }));
     // 選んだら検索を閉じて、選んだ本の並びに戻る
     setQuery('');
@@ -133,6 +139,7 @@ export function Picker({ initial }: { initial?: SearchBookMeta[] } = {}) {
 
   const submit = async () => {
     if (!ready || busy) return;
+    track('diagnose_submit');
     setBusy(true);
     setError('');
     try {
